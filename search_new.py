@@ -35,7 +35,8 @@ BibleSearch:  Can index and search the 'KJV' sword module using different types 
 
 from sys import argv, exit
 import sys
-from functools import wraps
+from os import getcwd
+from functools import wraps, partial
 from optparse import OptionParser
 from time import strftime, mktime, localtime
 from textwrap import wrap, fill, TextWrapper, dedent
@@ -58,6 +59,9 @@ import locale
 
 import Sword
 
+VERBOSE_LEVEL = 1
+COLOR_LEVEL = 3
+
 # Highlight colors.
 highlight_color = '\033[7m'
 highlight_text = '%s\\1\033[m' % highlight_color
@@ -65,13 +69,14 @@ word_regx = re.compile(r'\b([\w-]+)\b')
 # Strip previous color.
 strip_color_regx = re.compile('\033\[[\d;]*m')
 
-def info_print(data, end='\n'):
+def info_print(data, end='\n', tag=0):
     """ Print the data to stderr as info.
 
     """
 
-    print(data, end=end, file=sys.stderr)
-    sys.stderr.flush()
+    if tag <= VERBOSE_LEVEL:
+        print(data, end=end, file=sys.stderr)
+        sys.stderr.flush()
 
 def book_gen():
     """ A Generator function that yields book names in order.
@@ -185,12 +190,15 @@ def screen_size():
             return (25, 80)
 
 def render_verses_with_italics(ref_list, wrap=True, strongs=False, 
-                               morph=False, highlight_func=None, *args):
+                               morph=False, added=True, notes=False,
+                               highlight_func=None, *args):
     """ Renders a the verse text at verse_ref with italics highlighted.  
     Returns a strong "verse_ref: verse_text"
         wrap            -   Whether to wrap the text.
         strongs         -   Include Strong's Numbers in the output.
         morph           -   Include Morphological Tags in the output.
+        added           -   Include added text (i.e. italics) in the output.
+        notes           -   Include study notes at the end of the text.
         highlight_func  -   A function to highlight anything else 
                             (i.e. search terms.)
         *args           -   Any additional arguments to pass to 
@@ -201,32 +209,34 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
 
     """
 
-    # The Strong's and Morphology matching regular expressions.
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'<((?:\033\[[\d;]*m)*?[GH]?\d+?(?:\033\[[\d;]*m)*?)>', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\{((?:\033\[[\d+;]*m)*?[\w-]*?(?:\033\[[\d+;]*m)*?)\}')
-
     # Set the colors of different items.
-    strongs_color = '\033[36m'
-    morph_color = '\033[35m'
-    ref_color = '\033[32m'
-    italic_color = '\033[4m'
     end_color = '\033[m'
 
     # Build replacement strings that highlight Strong's Numbers and 
     # Morphological Tags.
-    strongs_highlight = '<%s\\1%s>' % (strongs_color, end_color)
-    morph_highlight = '{%s\\1%s}' % (morph_color, end_color)
-    italic_highlight = '%s\\1%s' % (italic_color, end_color)
+    if COLOR_LEVEL >= 2:
+        # The Strong's and Morphology matching regular expressions.
+        # Match strongs numbers.
+        strongs_regx = re.compile(r'<((?:\033\[[\d;]*m)*?[GH]?\d+?(?:\033\[[\d;]*m)*?)>', re.I)
+        # It needs to match with braces or it will catch all capitalized
+        # word and words with '-'s in them.
+        morph_regx = re.compile(r'\{((?:\033\[[\d+;]*m)*?[\w-]*?(?:\033\[[\d+;]*m)*?)\}')
+        strongs_color = '\033[36m'
+        morph_color = '\033[35m'
+        strongs_highlight = '<%s\\1%s>' % (strongs_color, end_color)
+        morph_highlight = '{%s\\1%s}' % (morph_color, end_color)
+
+    if COLOR_LEVEL >= 0:
+        ref_color = '\033[32m'
+        ref_highlight = '%s\\1%s' % (ref_color, end_color)
+
+    if COLOR_LEVEL >= 1 and added:
+        italic_color = '\033[4m'
+        italic_regx = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
+        italic_highlight = '%s\\1%s' % (italic_color, end_color)
 
     # Get the local text encoding.
     encoding = get_encoding()
-
-    #strip_color_regx = re.compile('\033\[[\d;]*m')
-    italic_regx = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
-    #word_regx = re.compile(r'\b([\w-]+)\b')
 
     # A substitution replacement function for highlighting italics.
     def italic_color(match):
@@ -243,7 +253,9 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     #verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
                                #markup=Sword.FMT_PLAIN, render='render_raw')
     verse_iter = IndexedVerseTextIter(iter(ref_list), strongs, morph,
-                                      italic_markers=True)
+                                      italic_markers=(COLOR_LEVEL >= 1),
+                                      added=added, paragraph=added,
+                                      notes=notes)
     for verse_ref, verse_text in verse_iter:
         # Encode than decode the verse text to make it compatable with
         # the locale.
@@ -255,22 +267,27 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         if wrap:
             verse_text = fill(verse_text, screen_size()[1], 
                               break_on_hyphens=False)
-        # Color the verse reference.
-        verse_text = re.sub(verse_ref, '%s%s%s' % (ref_color, verse_ref,
-                                                   end_color), verse_text)
 
-        # Highlight the italic text we previously pulled out.
-        verse_text = italic_regx.sub(italic_color, verse_text)
+        if COLOR_LEVEL >= 0:
+            # Color the verse reference.
+            colored_ref = word_regx.sub(ref_highlight, verse_ref)
+            verse_text = re.sub(verse_ref, colored_ref, verse_text)
 
-        # Highlight Strong's and Morphology if they are visible.
-        if strongs:
-            verse_text = strongs_regx.sub(strongs_highlight, verse_text)
-        if morph:
-            verse_text = morph_regx.sub(morph_highlight, verse_text)
+        if COLOR_LEVEL >= 1 and added:
+            # Highlight the italic text we previously pulled out.
+            verse_text = italic_regx.sub(italic_color, verse_text)
 
-        # Highlight the different elements.
-        if highlight_func:
-            verse_text = highlight_func(verse_text, strongs, morph, *args)
+        if COLOR_LEVEL >= 2:
+            # Highlight Strong's and Morphology if they are visible.
+            if strongs:
+                verse_text = strongs_regx.sub(strongs_highlight, verse_text)
+            if morph:
+                verse_text = morph_regx.sub(morph_highlight, verse_text)
+
+        if COLOR_LEVEL >= 3:
+            # Highlight the different elements.
+            if highlight_func:
+                verse_text = highlight_func(verse_text, strongs, morph, *args)
 
         # Finally produce the formated text.
         yield verse_text
@@ -317,7 +334,8 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False):
     for item in search_list:
         regx_list.append(Search.search_terms_to_regex(item, case_sensitive,
                 word_bound='(?:\033\[[\d;]*m|\\\\b)+',
-                extra_space='|\033\[[\d;]*m|\033', sloppy=sloppy))
+                extra_space='|\033\[[\d;]*m|\033', 
+                sloppy=(sloppy or '~' in item)))
 
     return regx_list
 
@@ -586,18 +604,21 @@ class VerseTextIter(object):
         strongs_str = morph_str = ''
         if xml_dom.attributes:
             attr_dict = dict(xml_dom.attributes.items())
+            info_print(attr_dict, tag=4)
             # Get any paragraph marker.
-            verse_text = attr_dict.get('marker', '')
-            # The type of this nodes children.
-            s_type = attr_dict.get('type', '')
+            if 'marker' in attr_dict:
+                verse_text = '<p>%s</p>' % attr_dict['marker']
+            else:
+                verse_text = ''
             italic_str = '%s'
+            note_str = '%s'
             for key, value in attr_dict.items():
                 # Italicize any added text.
                 if 'added' in value.lower():
                     italic_str = '<i>%s</i>'
-                # Don't include any study notes.
+                # Label study notes.
                 elif 'study' in value.lower() or 'note' in name.lower():
-                    return verse_text
+                    note_str = '<n>%s</n>'
                 # Check for strongs.
                 elif 'lemma' in key.lower() and strongs:
                     for num in value.split():
@@ -615,8 +636,9 @@ class VerseTextIter(object):
                 verse_text += ' %s' % child_s
 
         if xml_dom.attributes:
-            return italic_str % '%s%s%s' % (verse_text, strongs_str, morph_str)
+            return italic_str % note_str % '%s%s%s' % (verse_text, strongs_str, morph_str)
         if hasattr(xml_dom, 'data'):
+            info_print(xml_dom.data, tag=4)
             return xml_dom.data
         return verse_text.strip()
 
@@ -646,23 +668,31 @@ class IndexedVerseTextIter(object):
     """
 
     def __init__(self, reference_iter, strongs=False, morph=False, 
-                 module='KJV', italic_markers=False, added=True):
+                 module='KJV', italic_markers=False, added=True, 
+                 paragraph=True, notes=False, path=''):
         """ Initialize.
 
         """
 
         self._clean_morph_regex = re.compile(r' \{([\w-]+)\}')
         self._clean_strongs_regex = re.compile(r' <([GH]\d+)>')
-        self._clean_markers_regex = re.compile(r'(<i>\s?|\s?</i>)')
-        self._remove_added_regex = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
+        self._clean_italic_regex = re.compile(r'(<i>\s?|\s?</i>)')
+        self._clean_marker_regex = re.compile(r'(<p>\s?|\s?</p>)')
+        self._clean_note_regex = re.compile(r'(<n>\s?|\s?</n>)')
+        self._note_regex = re.compile(r'<n>\s?(.*?)\s?</n>', re.S)
+        self._remove_added_regex = re.compile(r'\s?<i>\s?(.*?)\s?</i>', re.S)
+        self._remove_marker_regex = re.compile(r'\s?<p>\s?(.*?)\s?</p>', re.S)
+        self._remove_notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
 
-        self._index_dict = IndexDict('%s' % module)
+        self._index_dict = IndexDict('%s' % module, path)
 
         self._ref_iter = reference_iter
         self._strongs = strongs
         self._morph = morph
         self._keep_added = added
         self._italic_markers = italic_markers
+        self._keep_paragraph = paragraph
+        self._keep_notes = notes
 
     def next(self):
         """ Returns the next verse reference and text.
@@ -703,9 +733,18 @@ class IndexedVerseTextIter(object):
         if not self._morph:
             verse_text = self._clean_morph_regex.sub('', verse_text)
         if not self._italic_markers:
-            verse_text = self._clean_markers_regex.sub('', verse_text)
+            verse_text = self._clean_italic_regex.sub('', verse_text)
         if not self._keep_added:
             verse_text = self._remove_added_regex.sub('', verse_text)
+        if not self._keep_paragraph:
+            verse_text = self._remove_marker_regex.sub('', verse_text)
+        else:
+            verse_text = self._clean_marker_regex.sub('', verse_text)
+        if not self._keep_notes:
+            verse_text = self._remove_notes_regex.sub('', verse_text)
+        else:
+            #verse_text = self._clean_note_regex.sub('', verse_text)
+            verse_text = self._note_regex.sub('(Notes: \\1)', verse_text)
 
         return verse_text
 
@@ -901,20 +940,24 @@ class IndexBible(object):
 
     """
 
-    def __init__(self, module='KJV'):
+    def __init__(self, module='KJV', path=''):
         """ Initialize the index dicts.
 
         """
         
         self._module_name = module
+        self._path = path if path else getcwd()
 
         # Remove morphological and strongs information.
         self._cleanup_regx = re.compile(r' (<([GH]\d*)>|\{([A-Z\d-]*)\})')
+        # Note removal regular expression.
+        self._remove_notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
+        self._remove_tags_regex = re.compile(r'<[/]?[pin]>')
 
         self._non_alnum_regx = re.compile(r'\W')
         self._fix_regx = re.compile(r'\s+')
-        self._strongs_regx = re.compile(r'<([GH]\d+)>')
-        self._morph_regx = re.compile(r'\{([\w-]+)\}')
+        self._strongs_regx = re.compile(r'<([GH]\d+)>', re.I)
+        self._morph_regx = re.compile(r'\{([\w-]+)\}', re.I)
 
         self._module_dict = defaultdict(list)
         # lower_case is used to store lower_case words case sensitive
@@ -1008,12 +1051,18 @@ class IndexBible(object):
             info_print('\033[%dD\033[KIndexing...%s' % \
                        (len(verse_ref) + 20, verse_ref), end='')
 
-            self._index_strongs(verse_ref, verse_text)
-            self._index_morph(verse_ref, verse_text)
-            self._index_words(verse_ref, verse_text)
             # Put the entire Bible in the index, so we can pull it out
             # faster.
             self._module_dict[verse_ref] = verse_text
+            # Remove the notes so we don't search them.
+            verse_text = self._remove_notes_regex.sub('', verse_text)
+            # Remove tags so they don't mess anything up.
+            verse_text = self._remove_tags_regex.sub('', verse_text)
+
+            # Index everything else.
+            self._index_strongs(verse_ref, verse_text)
+            self._index_morph(verse_ref, verse_text)
+            self._index_words(verse_ref, verse_text)
 
     def build_index(self):
         """ Create index files of the bible for strongs numbers, 
@@ -1050,7 +1099,7 @@ class IndexBible(object):
         #return
             # Save a dbm database that we can access without loading it all
             # into memeory so it is fast.
-            with IndexDbm('%s.dbm' % name, 'nf') as index_file:
+            with IndexDbm('%s/%s.dbm' % (self._path, name), 'nf') as index_file:
                 #with open(name, 'r') as i_file:
                     #dic =json.load(i_file)
                 index_file.update(dic)
@@ -1062,7 +1111,7 @@ class IndexDict(dict):
 
     """
 
-    def __init__(self, name=None):
+    def __init__(self, name='', path=''):
         """ Initialize the index.
 
         """
@@ -1070,6 +1119,7 @@ class IndexDict(dict):
         self._non_key_text_regx = re.compile(r'[<>\{\}]')
 
         self._name = name
+        self._path = path if path else getcwd()
         self._lower_case = self.get('lower_case', {})
 
         super(IndexDict, self).__init__()
@@ -1087,7 +1137,7 @@ class IndexDict(dict):
         key = self._non_key_text_regx.sub('', key).strip()
         if self._name and (key not in self):
             # Load the value from the database if we don't have it.
-            with IndexDbm('%s_index_i.dbm' % self._name, 'r') as dbm_dict:
+            with IndexDbm('%s/%s_index_i.dbm' % (self._path, self._name), 'r') as dbm_dict:
                 self[key] = dbm_dict.get(key)
 
         return super(IndexDict, self).__getitem__(key)
@@ -1362,7 +1412,7 @@ class Search(object):
 
     # Match strongs numbers.
     _strongs_regx = re.compile(r'[<]?(\b[GH]\d+\b)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
+    # It needs to match with braces or it will catch all capitalized
     # word and words with '-'s in them.
     _morph_regx = re.compile(r'[\(\{](\b[\w-]+\b)[\}\)]', re.I)
     _word_regx = re.compile(r'\b([\w\\-]+)\b')
@@ -1375,13 +1425,13 @@ class Search(object):
     # Escape the morphological tags.
     _escape_morph = classmethod(lambda c, m: '\{%s\}' % re.escape(m.groups()[0]).upper())
 
-    def __init__(self, module='KJV'):
+    def __init__(self, module='KJV', path=''):
         """ Initialize the search.
 
         """
 
         # The index dictionary.
-        self._index_dict = IndexDict(module)
+        self._index_dict = IndexDict(module, path)
 
         self._module_name = module
 
@@ -1453,7 +1503,7 @@ class Search(object):
         # Re-combine the search terms with the regular expression string
         # between each element.
         reg_str = space_str.join(temp_str.split())
-        print(reg_str)
+        info_print('\nUsing regular expression: %s\n' % reg_str, tag=2)
 
         return re.compile(reg_str, flags)
 
@@ -1501,7 +1551,7 @@ class Search(object):
 
         @wraps(func)
         def wrapper(self, search_terms, strongs=False, morph=False,
-                    case_sensitive=False, range_str=''):
+                    added=True, case_sensitive=False, range_str=''):
             """ Process the search terms according to the wrapped functions
             requirements, then apply the range, if given, to the returned set
             of verses.
@@ -1537,8 +1587,8 @@ class Search(object):
                 search_str = search_terms
 
                 # Get the set of found verses.
-            found_set = func(self, search_str, strongs, morph, case_sensitive,
-                                 range_set)
+            found_set = func(self, search_str, strongs, morph, added,
+                             case_sensitive, range_set)
 
             # The phrase, regular expression, and combined searches apply the
             # range before searching, so only multi-word and any-word searches
@@ -1553,7 +1603,7 @@ class Search(object):
 
     @_process_search
     def combined_search(self, search_terms, strongs=False, morph=False,
-                        case_sensitive=False, range_str=''):
+                        added=True, case_sensitive=False, range_str=''):
         """ combined_search(self, search_terms, strongs=False, morph=False,
                         case_sensitive=False, range_str=''): ->
         Perform a combined search.  Search terms could be
@@ -1563,12 +1613,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for '%s'..." % search_terms)
+        info_print("Searching for '%s'..." % search_terms, tag=1)
 
         # Process the search_terms.
         arg_parser = CombinedParse(search_terms)
@@ -1622,7 +1673,7 @@ class Search(object):
 
     @_process_search
     def combined_phrase_search(self, search_terms, strongs=False, morph=False,
-                               case_sensitive=False, range_str=''):
+                               added=True, case_sensitive=False, range_str=''):
         """ combined_phrase_search(self, search_terms, strongs=False,
                 morph=False, case_sensitive=False, range_str=''): ->
         Perform a combined phrase search.  Search terms could be
@@ -1632,12 +1683,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for '%s'..." % search_terms)
+        info_print("Searching for '%s'..." % search_terms, tag=1)
 
         # Process the search_terms.
         arg_parser = CombinedParse(search_terms)
@@ -1672,7 +1724,7 @@ class Search(object):
 
     @_process_search
     def multiword_search(self, search_terms, strongs=False, morph=False,
-                         case_sensitive=False, range_str=''):
+                         added=True, case_sensitive=False, range_str=''):
         """ multiword_search(self, search_terms, strongs=False, morph=False,
                   case_sensitive=False, range_str='') -> 
         Perform a multiword search using the search_terms.
@@ -1680,12 +1732,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with all these words '%s'..." % ', '.join(search_terms.split()))
+        info_print("Searching for verses with all these words '%s'..." % ', '.join(search_terms.split()), tag=1)
 
         # All that needs to be done is find all references with all the
         # searched words in them.
@@ -1696,7 +1749,7 @@ class Search(object):
 
     @_process_search
     def eitheror_search(self, search_terms, strongs=False, morph=False,
-                        case_sensitive=False, range_str=''):
+                        added=True, case_sensitive=False, range_str=''):
         """ eitheror_search(self, search_terms, strongs=False, morph=False,
                 case_sensitive=False, range_str='') -> 
         Perform a search returning any verse with one and only one of the terms
@@ -1705,12 +1758,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with one and not all of these words '%s'..." % ', '.join(search_terms.split()))
+        info_print("Searching for verses with one and not all of these words '%s'..." % ', '.join(search_terms.split()), tag=1)
 
         # Any verse with one and only one of the searched words.
         found_set = self._index_dict.value_sym_diff(search_terms.split(), 
@@ -1720,7 +1774,7 @@ class Search(object):
 
     @_process_search
     def anyword_search(self, search_terms, strongs=False, morph=False,
-                       case_sensitive=False, range_str=''):
+                       added=True, case_sensitive=False, range_str=''):
         """ anyword_search(self, search_terms, strongs=False, morph=False,
                 case_sensitive=False, range_str='') -> 
         Perform a search returning any verse with one or more of the search
@@ -1729,12 +1783,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with any of these words '%s'..." % ', '.join(search_terms.split()))
+        info_print("Searching for verses with any of these words '%s'..." % ', '.join(search_terms.split()), tag=1)
 
         # Any verse with one or more of the searched words.
         found_set = self._index_dict.value_union(search_terms.split(), 
@@ -1749,7 +1804,7 @@ class Search(object):
 
         @wraps(func)
         def wrapper(self, search_terms, strongs=False, morph=False,
-                    case_sensitive=False, range_str=''):
+                    added=True, case_sensitive=False, range_str=''):
             """ Gets a regular expression from the wrapped function, then
             builds a set of verse references to search, finally it calls the
             searching function with the regular expression and the verse
@@ -1757,7 +1812,7 @@ class Search(object):
 
             """
 
-            search_regx = func(self, search_terms, strongs, morph,
+            search_regx = func(self, search_terms, strongs, morph, added,
                                case_sensitive, range_str)
 
             # First make sure we are only searching verses that have all the
@@ -1787,7 +1842,7 @@ class Search(object):
     @_process_search
     @_process_phrase
     def ordered_multiword_search(self, search_terms, strongs=False,
-                                 morph=False, case_sensitive=False,
+                                 morph=False, added=True, case_sensitive=False,
                                  range_str=''):
         """ ordered_multiword_search(self, search_terms, strongs=False,
             morph=False, case_sensitive=False, range_str='') -> 
@@ -1797,12 +1852,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with these words in order '%s'..." % search_terms)
+        info_print("Searching for verses with these words in order '%s'..." % search_terms, tag=1)
 
         return self.search_terms_to_regex(search_terms, case_sensitive,
                                           sloppy=True)
@@ -1810,7 +1866,7 @@ class Search(object):
     @_process_search
     @_process_phrase
     def phrase_search(self, search_terms, strongs=False, morph=False, 
-                      case_sensitive=False, range_str=''):
+                      added=True, case_sensitive=False, range_str=''):
         """ phrase_search(self, search_terms, strongs=False, morph=False,
                case_sensitive=False, range_str='') -> 
         Perform a phrase search.
@@ -1818,12 +1874,13 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with this phrase '%s'..." % search_terms)
+        info_print("Searching for verses with this phrase '%s'..." % search_terms, tag=1)
 
         # Make all the terms the same case if case doesn't matter.
         flags = re.I if not case_sensitive else 0
@@ -1845,7 +1902,7 @@ class Search(object):
     @_process_search
     @_process_phrase
     def mixed_phrase_search(self, search_terms, strongs=False, morph=False, 
-                      case_sensitive=False, range_str=''):
+                            added=True, case_sensitive=False, range_str=''):
         """ mixed_phrase_search(self, search_terms, strongs=False, morph=False,
         case_sensitive=False, range_str='') -> 
         Perform a phrase search.
@@ -1853,19 +1910,20 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for verses with this phrase '%s'..." % search_terms)
+        info_print("Searching for verses with this phrase '%s'..." % search_terms, tag=1)
 
         # Make a regular expression from the search terms.
         return self.search_terms_to_regex(search_terms, case_sensitive)
 
     @_process_search
     def regex_search(self, search_terms, strongs=False, morph=False,
-                     case_sensitive=False, range_str=''):
+                     added=True, case_sensitive=False, range_str=''):
         """ regex_search(self, search_terms, strongs=False, morph=False,
               case_sensitive=False, range_str='') -> 
         Perform a regular expression search.
@@ -1873,12 +1931,14 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
         """
 
-        info_print("Searching for regular expression '%s'..." % search_terms)
+        info_print("Searching for regular expression '%s'..." % search_terms,
+                   tag=1)
 
         # re.I is case insensitive.
         flags = re.I if not case_sensitive else 0
@@ -1898,36 +1958,11 @@ class Search(object):
             # Search the entire Bible.
             ref_iter = VerseIter('Genesis 1:1')
 
-        return self.find_from_regex(ref_iter, search_regx, strongs, morph, show_info=True, try_clean=True)
-
-        # The iter returns a tuple (verse_ref, verse_text).
-        verse_iter = IndexedVerseTextIter(ref_iter, strongs=strongs,
-                                          morph=morph,
-                                          module=self._module_name)
-
-        # The set that will be returned with all the references whose text
-        # matches the regular expression.
-        found_verses = set()
-        for verse_ref, verse_text in verse_iter:
-            # Take this out to gain a little speed.
-            info_print('\033[%dD\033[KSearching...%s' % \
-                       (len(verse_ref) + 20, verse_ref), end='')
-
-            if search_regx.search(verse_text):
-                found_verses.add(verse_ref)
-            elif not strongs and not morph:
-                # Should we do this or should we trust the user knows what
-                # puctuation are in the verses?
-                clean_verse_text = self._clean_text(verse_text)
-                if search_regx.search(clean_verse_text):
-                    found_verses.add(verse_ref)
-
-        info_print("...Done.")
-
-        return found_verses
+        return self.find_from_regex(ref_iter, search_regx, strongs, morph,
+                                    tag=1, try_clean=True)
 
     def find_from_regex(self, ref_iter, search_regex, strongs=False,
-                        morph=False, show_info=False, try_clean=False):
+                        morph=False, added=True, tag=3, try_clean=False):
         """ Iterates through all the verses in the ref iter iterator and
         returns a list of verses whose text matches search_regx.
 
@@ -1936,15 +1971,13 @@ class Search(object):
         # Get an iterator that will return tuples
         # (verse_reference, verse_text).
         verse_iter = IndexedVerseTextIter(ref_iter, strongs=strongs,
-                                          morph=morph,
+                                          morph=morph, added=added,
                                           module=self._module_name)
 
         found_set = set()
         for verse_ref, verse_text in verse_iter:
-            if show_info:
-                # Take this out to gain a little speed.
-                info_print('\033[%dD\033[KSearching...%s' % \
-                           (len(verse_ref) + 20, verse_ref), end='')
+            info_print('\033[%dD\033[KSearching...%s' % \
+                       (len(verse_ref) + 20, verse_ref), end='', tag=tag)
 
             # Search for matches in the verse text.
             if search_regex.search(verse_text):
@@ -1956,13 +1989,12 @@ class Search(object):
                 if search_regex.search(clean_verse_text):
                     found_verses.add(verse_ref)
         
-        if show_info:
-            info_print("...Done.")
+        info_print("...Done.", tag=tag)
 
         return found_set
 
     def mixed_search(self, search_terms, strongs=False, morph=False, 
-                      case_sensitive=False, range_str=''):
+                     added=True, case_sensitive=False, range_str=''):
         """ mixed_search(self, search_terms, strongs=False, morph=False,
                case_sensitive=False, range_str='') -> 
         Perform a mixed search.
@@ -1970,6 +2002,7 @@ class Search(object):
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
             morph           -   Search for Morphological Tag phrases.
+            added           -   Search in the added text (i.e. italics).
             case_sensitive  -   Perform a case sensitive search.
             range_str       -   A verse range to limit the search to.
 
@@ -2023,7 +2056,7 @@ class Search(object):
             morph = bool(self._morph_regx.match(term.upper()))
 
             # Search for words or phrases.
-            temp_set = search_func(term, strongs, morph, case_sensitive,
+            temp_set = search_func(term, strongs, morph, added, case_sensitive,
                                    range_str)
 
             # Add the results to the correct set.
@@ -2063,7 +2096,7 @@ class Search(object):
 
         search_terms = ' '.join(search_terms)
 
-        info_print("Searching using the Sword library for '%s'..." % search_terms)
+        info_print("Searching using the Sword library for '%s'..." % search_terms, tag=1)
         
         found_set = set()
 
@@ -2134,7 +2167,7 @@ def main(arg_list, **kwargs):
 
     """
 
-    info_print("\nProcessing arguments...\n")
+    info_print("\nProcessing arguments...\n", tag=2)
 
     # Build the index.
     if kwargs['build_index']:
@@ -2149,6 +2182,7 @@ def main(arg_list, **kwargs):
     search_type = kwargs['search_type']
     strongs_search = kwargs['search_strongs']
     morph_search = kwargs['search_morphology']
+    search_added = kwargs['search_added']
     case_sensitive = kwargs['case_sensitive']
     search_range = kwargs['search_range']
 
@@ -2238,12 +2272,13 @@ def main(arg_list, **kwargs):
 
         # Search.
         results = search_func(arg_list, strongs_search, morph_search,
-                              case_sensitive, search_range, *extras)
+                              search_added, case_sensitive, search_range,
+                              *extras)
 
         
     count = len(results)
-    print("\nFound %s verse%s.\n" % (count, 's' if count != 1 else ''), 
-          file=sys.stderr)
+    info_print("\nFound %s verse%s.\n" % (count, 's' if count != 1 else ''), 
+               tag=-10)
 
     if kwargs['quiet']:
         # Only the verse count was given.
@@ -2286,7 +2321,9 @@ def main(arg_list, **kwargs):
         # Don't modify regular expression searches.
         if search_type != 'regex':
             regx_list = build_highlight_regx(highlight_list, case_sensitive,
-                        (search_type == 'ordered_multiword' or '~' in arg_str))
+                        (search_type == 'ordered_multiword'))
+            if kwargs['context']:
+                regx_list.extend(build_highlight_regx(results, case_sensitive))
         else:
             regx_list = [re.compile(arg_str, re.I if case_sensitive else 0)]
 
@@ -2303,6 +2340,8 @@ def main(arg_list, **kwargs):
         verse_gen = render_verses_with_italics(context_results, 
                                                not kwargs['one_line'],
                                                show_strongs, show_morph, 
+                                               search_added,
+                                               kwargs['show_notes'],
                                                highlight_search_terms,
                                                regx_list, flags)
         if kwargs['one_line']:
@@ -2354,6 +2393,12 @@ if __name__ == '__main__':
                         help='The number of verses before and after the match\
                               to include in the output.',
                         dest='context')
+    parser.add_option('-a', '--added', action='store_false', default=True,
+                        help="Show/search the added text (italics) default is \
+                                True.",
+                              dest='search_added')
+    parser.add_option('', '--notes', action='store_true', default=False,
+                        help="Show study notes.", dest='show_notes')
     parser.add_option('-n', '--numbers', action='store_true', default=False,
                         help="Include the Strong's numbers in the verse \
                               output.", dest='show_numbers')
@@ -2363,11 +2408,30 @@ if __name__ == '__main__':
     parser.add_option('-r', '--verse_ref', action='store_true', default=False,
                         help='Show only a sorted list of references', 
                         dest='list_only')
+    parser.add_option('-c', '--color_output', action='store', default=3,
+                        help='How much to color. (-1 == nothing, 0 == verse references, 1 == italics, 2 == attributes, 3 == highlight)',
+                        dest='color_level')
     parser.add_option('-q', '--quiet', action='store_true', default=False,
                         help='Only print the number of verses found.', 
                         dest='quiet')
+    parser.add_option('-v', '--verbose', action='store', default=1,
+                        help='Print more information.', 
+                        dest='verbose_level')
 
     options, args = parser.parse_args()
+    try:
+        VERBOSE_LEVEL = int(options.verbose_level)
+    except Exception as err:
+        print("Invalid verbose level '%s': %s" % (options.verbose_level, err),
+              file=sys.stderr)
+        VERBOSE_LEVEL = 1
+    try:
+        COLOR_LEVEL = int(options.color_level)
+    except Exception as err:
+        print("Invalid color level '%s': %s" % (options.verbose_level, err),
+              file=sys.stderr)
+        COLOR_LEVEL = 3
+
     def stdout_to_stderr(data):
         """ Write data to stderr.
 
