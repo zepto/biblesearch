@@ -254,7 +254,14 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
                                       italic_markers=(COLOR_LEVEL >= 1),
                                       added=added, paragraph=added,
                                       notes=notes)
+    if VERBOSE_LEVEL >= 30:
+        verse_iter = RawDict(iter(ref_list))
     for verse_ref, verse_text in verse_iter:
+        if VERBOSE_LEVEL >= 30:
+            len_longest_key = len(max(verse_text[1].keys(), key=len))
+            for key, value in verse_text[1].items():
+                print('\033[33m{0:{1}}\033[m: {2}'.format(key, len_longest_key, value))
+            verse_text = verse_text[1]['_verse_text'][0]
         # Encode than decode the verse text to make it compatable with
         # the locale.
         verse_text = verse_text.strip().encode(encoding, 'replace')
@@ -684,6 +691,12 @@ class RawDict(object):
 
         self._ref_iter = reference_iter
 
+        self._fix_space_regx = re.compile(r'([^\.:\?!])\s+')
+        self._fix_end_regx = re.compile(r'\s+([\.:\?!,;])')
+        self._remove_tag_regx = re.compile(r'(<i>\s?|\s?</i>)')
+        self._fix_start_tag_regx = re.compile(r'(<i>)\s*')
+        self._fix_end_tag_regx = re.compile(r'\s*(</i>)')
+
     def next(self):
         """ Returns the next verse reference and text.
 
@@ -729,58 +742,129 @@ class RawDict(object):
 
         """
 
-        # The string that will hold the verse.
+        # The dictionary that will hold the verse.
         verse_dict = defaultdict(list)
+        verse_dict['_words'].append(defaultdict(list))
         # Recursively build the text from all the child nodes.
         child_s = ''
-        text = ''
+        # The string that will hold the verse.
+        verse_text = ''
+        # The name of the current tag.
+        name = xml_dom.localName if xml_dom.localName else ''
+        # Build up the dictionary and verse text from the child nodes.
         for node in xml_dom.childNodes:
-            child_s = self._raw_to_dict(node, strongs, morph)
-            if not isinstance(child_s, str):
-                for k, v in child_s.items():
-                    verse_dict[k].extend(v)
+            child_s, child_d = self._raw_to_dict(node, strongs, morph)
+            if 'divine' in name.lower():
+                # Uppercase 'LORD's in the text.
+                verse_text += ' %s' % child_s.upper()
             else:
-                text += child_s
+                verse_text += ' %s' % child_s
+            for key, value in child_d.items():
+                # Cleanup the items in the dictionary.
+                if value and not isinstance(value[0], dict):
+                    new_list = set(value).union(verse_dict[key])
+                else:
+                    new_list = value
+                if key == '_words':
+                    # Update the words dictionary.
+                    for words, lst in value[0].items():
+                        new_list = filter(any, lst)
+                        verse_dict['_words'][0][words].extend(new_list)
+                else:
+                    # Make sure all items in the list are not None.
+                    verse_dict[key].extend(filter(any, new_list))
+
         if xml_dom.attributes:
             attr_dict = dict(xml_dom.attributes.items())
-            if strongs:
-                if 'lemma' in attr_dict:
-                    for num in attr_dict['lemma'].split():
-                        verse_dict[num.split(':')[1]].append(text)
-            if morph:
-                if 'morph' in attr_dict:
-                    for tag in attr_dict['morph'].split():
-                        verse_dict[tag.split(':')[1]].append(text)
-            if 'morph' in attr_dict or 'lemma' in attr_dict:
-                attrib_dict = defaultdict(list)
-                if 'morph' in attr_dict:
-                    for tag in attr_dict['morph'].split():
-                        attrib_dict['morph'].append(tag.split(':')[1])
-                if 'lemma' in attr_dict:
-                    for num in attr_dict['lemma'].split():
-                        attrib_dict['strongs'].append(num.split(':')[1])
-                verse_dict[text.lower()].append(attrib_dict)
+            # Cleanup and format the verse text.
+            verse_text = self._fix_end_regx.sub('\\1', verse_text)
+            verse_text = self._fix_space_regx.sub('\\1 ', verse_text)
+            verse_text = self._fix_start_tag_regx.sub('\\1', verse_text)
+            verse_text = self._fix_end_tag_regx.sub('\\1', verse_text)
+            verse_text = verse_text.replace('\n', '')
+            # Text clean of all italic tags.
+            clean_text = self._remove_tag_regx.sub('', verse_text)
+            italic_str = '%s'
+            # Dictionary to hold Strong's and Morphological attributes.
+            attrib_dict = defaultdict(list)
+            strongs_str = morph_str = ''
+            for key, value in attr_dict.items():
+                # Check for strongs.
+                if 'lemma' in key.lower():
+                    for num in value.split():
+                        # Get the number.
+                        num = num.split(':')[1]
+                        attrib_dict['strongs'].append(num)
+                        # Associate the text with the number.
+                        verse_dict[num].append(clean_text.strip())
+                        if strongs:
+                            strongs_str += ' <%s> ' % num
+                    # Cleanup the attribute dictionary.
+                    attrib_dict['strongs'] = list(set(attrib_dict['strongs']))
+                # Check for morphology.
+                elif 'morph' in key.lower():
+                    for tag in value.split():
+                        # Get the tag.
+                        tag = tag.split(':')[1]
+                        attrib_dict['morph'].append(tag)
+                        # Associate the text with the tag.
+                        verse_dict[tag].append(clean_text.strip())
+                        if morph:
+                            morph_str += ' {%s} ' % tag
+                    # Cleanup the attribute dictionary.
+                    attrib_dict['morph'] = list(set(attrib_dict['morph']))
+            if attrib_dict:
+                # Associate the numbers and tags with the text.
+                verse_dict['_words'][0][clean_text.strip()].append(attrib_dict)
+            elif 'type' in attr_dict or 'subType' in attr_dict:
+                _sub_type = attr_dict.get('subType', '')
+                _type = attr_dict.get('type', _sub_type)
+                if _type.lower() == 'x-p' or 'marker' in attr_dict :
+                    # Get any paragraph marker.
+                    verse_dict['_x-p'].append(attr_dict['marker'].strip())
+                elif 'study' in _type.lower() or 'note' in name.lower():
+                    verse_dict['_notes'].append(verse_text.strip())
+                if 'added' in _type.lower() or 'added' in _sub_type.lower():
+                    if 'marker' not in attr_dict:
+                        # Italicize any added text.
+                        italic_str = '<i>%s</i>'
+                        verse_dict['_added'].append(verse_text.strip())
+                elif 'section' in _type.lower() or 'preverse' in _sub_type.lower():
+                    # Add the preverse heading.
+                    verse_dict['_preverse'].append(verse_text.strip())
+                else:
+                    # Don't include unwanted tags (e.g. strongs markup and
+                    # notes) in the text.
+                    verse_text = ''
+            elif 'xmlns' in attr_dict:
+                verse_text = verse_text.strip()
+                # Include the entire verse text in the dictionary.
+                verse_dict['_%s' % attr_dict['xmlns']].append(verse_text)
+
+            # Build up the verse string.
+            temp_str = '%s%s%s' % (verse_text, strongs_str, morph_str)
+            verse_text = italic_str % temp_str
         if hasattr(xml_dom, 'data'):
-            info_print(xml_dom.data, tag=4)
-            return xml_dom.data
+            return xml_dom.data, verse_dict
         
-        return verse_dict
+        return verse_text, verse_dict
 
     def _get_parsed_dict(self, raw_text, strongs=False, morph=False):
         """ Parse raw verse text and return a formated version.
 
         """
 
+        info_print(raw_text, tag=31)
+
         # A hack to make the raw text parse as xml.
         xml_text = '''<?xml version="1.0"?>
         <root xmlns="%s">
         %s
-        </root>''' % ('verse', raw_text)
+        </root>''' % ('verse_text', raw_text)
 
         # It works now we can parse the xml dom.
         parsed_xml = parseString(xml_text)
-        parsed_dict = self._raw_to_dict(parsed_xml, strongs, morph)
-        return parsed_dict
+        return self._raw_to_dict(parsed_xml, strongs, morph)
 
 
 class IndexedVerseTextIter(object):
@@ -796,15 +880,32 @@ class IndexedVerseTextIter(object):
 
         """
 
-        self._clean_morph_regex = re.compile(r' \{([\w-]+)\}')
-        self._clean_strongs_regex = re.compile(r' <([GH]\d+)>')
-        self._clean_italic_regex = re.compile(r'(<i>\s?|\s?</i>)')
-        self._clean_marker_regex = re.compile(r'(<p>\s?|\s?</p>)')
-        self._clean_note_regex = re.compile(r'(<n>\s?|\s?</n>)')
-        self._note_regex = re.compile(r'<n>\s?(.*?)\s?</n>', re.S)
-        self._remove_added_regex = re.compile(r'\s?<i>\s?(.*?)\s?</i>', re.S)
-        self._remove_marker_regex = re.compile(r'\s?<p>\s?(.*?)\s?</p>', re.S)
-        self._remove_notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
+        #self._clean_morph_regex = re.compile(r' \{([\w-]+)\}')
+        #self._clean_strongs_regex = re.compile(r' <([GH]\d+)>')
+        #self._clean_italic_regex = re.compile(r'(<i>\s?|\s?</i>)')
+        #self._clean_marker_regex = re.compile(r'(<p>\s?|\s?</p>)')
+        #self._clean_note_regex = re.compile(r'(<n>\s?|\s?</n>)')
+        #self._remove_added_regex = re.compile(r'\s?<i>\s?(.*?)\s?</i>', re.S)
+        #self._remove_marker_regex = re.compile(r'\s?<p>\s?(.*?)\s?</p>', re.S)
+        self._notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
+
+        reg_list = []
+        if not strongs:
+            reg_list.append(r' <([GH]\d+)>')
+        if not morph:
+            reg_list.append(r' \{([\w-]+)\}')
+        if not added:
+            reg_list.append(r'\s?<i>\s?(.*?)\s?</i>')
+        if not italic_markers:
+            reg_list.append(r'(<i>\s?|\s?</i>)')
+        if not paragraph:
+            reg_list.append(r'\s?<p>\s?(.*?)\s?</p>')
+        else:
+            reg_list.append(r'(<p>\s?|\s?</p>)')
+        reg_str = r'(?:%s)' % r'|'.join(reg_list)
+        self._clean_regex = re.compile(reg_str, re.S)
+
+        self._notes_str = ' (Notes: \\1)' if notes else ''
 
         self._index_dict = IndexDict('%s' % module, path)
 
@@ -834,7 +935,7 @@ class IndexedVerseTextIter(object):
         # Set the verse and render the text.
         verse_text = self._get_text(verse_ref)
 
-        return (verse_ref, verse_text)
+        return (verse_ref, verse_text.strip())
 
     def __iter__(self):
         """ Returns an iterator of self.
@@ -850,23 +951,25 @@ class IndexedVerseTextIter(object):
         """
 
         verse_text = self._index_dict[verse_ref]
-        if not self._strongs:
-            verse_text = self._clean_strongs_regex.sub('', verse_text)
-        if not self._morph:
-            verse_text = self._clean_morph_regex.sub('', verse_text)
-        if not self._italic_markers:
-            verse_text = self._clean_italic_regex.sub('', verse_text)
-        if not self._keep_added:
-            verse_text = self._remove_added_regex.sub('', verse_text)
-        if not self._keep_paragraph:
-            verse_text = self._remove_marker_regex.sub('', verse_text)
-        else:
-            verse_text = self._clean_marker_regex.sub('', verse_text)
-        if not self._keep_notes:
-            verse_text = self._remove_notes_regex.sub('', verse_text)
-        else:
-            #verse_text = self._clean_note_regex.sub('', verse_text)
-            verse_text = self._note_regex.sub('(Notes: \\1)', verse_text)
+        verse_text = self._clean_regex.sub('', verse_text)
+        #if not self._strongs:
+            #verse_text = self._clean_strongs_regex.sub('', verse_text)
+        #if not self._morph:
+            #verse_text = self._clean_morph_regex.sub('', verse_text)
+        #if not self._italic_markers:
+            #verse_text = self._clean_italic_regex.sub('', verse_text)
+        #if not self._keep_added:
+            #verse_text = self._remove_added_regex.sub('', verse_text)
+        #if not self._keep_paragraph:
+            #verse_text = self._remove_marker_regex.sub('', verse_text)
+        #else:
+            #verse_text = self._clean_marker_regex.sub('', verse_text)
+
+        verse_text = self._notes_regex.sub(self._notes_str, verse_text)
+        #if not self._keep_notes:
+            #verse_text = self._remove_notes_regex.sub('', verse_text)
+        #else:
+            #verse_text = self._remove_notes_regex.sub(' (Notes: \\1)', verse_text)
 
         return verse_text
 
@@ -2301,44 +2404,46 @@ class Search(object):
 
         term_dict = defaultdict(list)
         raw_dict = RawDict(iter(ref_list), self._module_name)
-        for verse_ref, verse_dict in raw_dict:
+        words_len = 0
+        for verse_ref, (verse_text, verse_dict) in raw_dict:
             for term in search_terms.split():
                 if self._strongs_regx.match(term):
-                    num = term.replace('<', '').replace('>', '')
+                    num = self._strongs_regx.sub('\\1', term)
                     words = set(verse_dict[num.upper()])
                     if words:
                         term_dict[num.upper()].append({verse_ref:words})
                 elif self._morph_regx.match(term):
-                    tag = term.replace('{', '').replace('}', '')
-                    tag = term.replace('(', '').replace(')', '')
+                    tag = self._morph_regx.sub('\\1', term)
                     words = set(verse_dict[tag.upper()])
                     if words:
                         term_dict[tag.upper()].append({verse_ref:words})
                 else:
-                    for key, value in verse_dict.items():
-                        if term.lower() in key:
+                    for key, value in verse_dict['_words'][0].items():
+                        if ' %s ' % term.lower() in ' %s ' %  key.lower():
                             attr_dict = value[0]
                             if strongs and 'strongs' in attr_dict:
-                                term_dict[term].append({verse_ref:attr_dict['strongs']})
+                                attr_list = attr_dict['strongs']
+                                attr_list.append(key)
+                                term_dict[term].append({verse_ref:attr_list})
                             if morph and 'morph' in attr_dict:
-                                term_dict[term].append({verse_ref:attr_dict['morph']})
-                            #for dic in value:
-                                #if strongs and 'lemma' in dic:
-                                    #num_dict = defaultdict(list)
-                                    #for num in dic['lemma'].split():
-                                        #num_dict[verse_ref].append(num.split(':')[1])
-                                    #term_dict[term].append(num_dict)
-                                #if morph and 'morph' in dic:
-                                    #tag_dict = defaultdict(list)
-                                    #for tag in dic['morph'].split():
-                                        #tag_dict[verse_ref].append(tag.split(':')[1])
-                                    #term_dict[term].append(tag_dict)
+                                attr_list = attr_dict['morph']
+                                attr_list.append(key)
+                                words_len = max(len(attr_list), words_len)
+                                term_dict[term].append({verse_ref:attr_list})
         len_longest_ref = len(max(ref_set, key=len))
         for key, value in term_dict.items():
-            print('%s: ' % key)
+            words_len = max([len(i) for d in value for i, v in d.items()])
+            print('%s:' % key)
             for dic in value:
-                for ref, words in dic.items():
-                    print('\t{0:{1}}: "{2}"'.format(ref, len_longest_ref, '", "'.join(words)))
+                ref, words = tuple(dic.items())[0]
+                if isinstance(words, list):
+                    w_str = '"%s"' % '", "'.join(words[:-1])
+                    l_str = '"%s"' % words[-1]
+                    words_str = '{0:{2}}: {1}'.format(w_str, l_str, words_len)
+                else:
+                    words_str = '"%s"' % '", "'.join(words)
+                print('\t{0:{1}}: {2}'.format(ref, len_longest_ref, words_str))
+                    #print('\t{0:{1}}: "{2}"'.format(ref, len_longest_ref, '", "'.join(words)))
         exit()
 
 
