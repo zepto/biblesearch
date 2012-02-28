@@ -43,11 +43,9 @@ from fcntl import ioctl
 from collections import defaultdict
 from tarfile import TarFile, TarInfo
 from io import BytesIO
-from threading import Thread
 import dbm
 import os
 import json
-import shelve
 import gzip
 import re
 import locale
@@ -89,10 +87,102 @@ def parse_range(ref_str):
         range_list = sorted(ref_range.split('-'), key=sort_key)
         if len(range_list) == 2:
             # Valid ranges are only between two verses.
-            verse_set.update(VerseRefIter(*range_list))
+            verse_set.update(VerseIter(*range_list))
         else:
             # All others are added as seperate verses.
             verse_set.update(parse_verse_list(range_list))
+
+    return verse_set
+
+def set_from_ref(book, verse_g):
+    """ Build a set from the book and a group of verse/chap:verses
+
+    """
+
+    ref_set = set()
+
+    if verse_g.isdigit():
+        ref_set.update(ChapterIter(book, verse_g))
+        return ref_set
+
+    chap_range_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*([\d,-:]+)$')
+
+    verse_l = verse_g.split(',')
+    chap = ''
+    start = end = ''
+
+    for i in verse_l:
+        if '-' in i:
+            t, i = i.split('-')
+            if ':' in t:
+                chap, t = t.split(':')
+            if not chap:
+                start = '%s%s:%s' % (book, t, 1)
+            else:
+                start = '%s%s:%s' % (book, chap, t)
+            chap_range_match = chap_range_regx.match(i)
+            if chap_range_match:
+                book, verse_g = chap_range_match.groups()
+                end = set_from_ref(book, verse_g).pop()
+        if ':' in i:
+            chap, v = i.split(':')
+        else:
+            if not chap:
+                chap, v = i, 1
+            else:
+                v = i
+        if start:
+            if not end:
+                end = '%s%s:%s' % (book, chap, v)
+            ref_set.update(VerseIter(start, end))
+            start = end = ''
+        else:
+            ref_set.add('%s%s:%s' % (book, chap, v))
+    return ref_set
+
+def new_parse_verse_list(verse_ref_list):
+    """ Returns a valid list of verse references from the supplied list.
+    If just a book name is in the list that entire book is added.
+
+    """
+
+    # Match a book chapter:verse reference.
+    chap_verse_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*(\d+):(\d+)')
+    chap_range_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*([\w,-:]+)$')
+    # Match a book chapter reference.
+    chap_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*(\d+)')
+    verse_set = set()
+    for ref in verse_ref_list:
+        ref = ''.join(ref)
+        #chap_verse_m = chap_verse_regx.match(ref)
+        #if chap_verse_m:
+            #verse_set.add(Sword.VerseKey(ref).getText())
+            #book, chap, verses = chap_verse_m.groups()
+            #if ',' in verses:
+                #for verse in verses.split(','):
+                    #new_ref = '%s%s:%s' % (book, chap, verse)
+                    #verse_set.add(Sword.VerseKey(new_ref).getText())
+            #else:
+                #first, last = verses.split('-')
+                #start = '%s%s:%s' % (book, chap, first)
+                #end = '%s%s:%s' % (book, chap, last)
+                #verse_set.update(VerseIter(start, end))
+            #continue
+        #book_chap = chap_regx.match(ref)
+        #if book_chap:
+            # Only a book and chapter were given so we get that entire
+            # chapter.
+            #book, chap = book_chap.groups()
+            #verse_set.update(ChapterIter(book, chap))
+            #continue
+        chap_range_match = chap_range_regx.match(ref)
+        if chap_range_match:
+            book, verse_g = chap_range_match.groups()
+            verse_set.update(set_from_ref(book, verse_g))
+        else:
+            # No verse or chapter were given so we will get the entire
+            # book.
+            verse_set.update(BookIter(ref))
 
     return verse_set
 
@@ -102,26 +192,39 @@ def parse_verse_list(verse_ref_list):
 
     """
 
-    # Mach a book chapter:verse reference.
-    chap_verse_regx = re.compile(r'([\d]?[\s]?\D+)[\s]?(\d+:\d+)')
-    # Mach a book chapter reference.
-    chap_regx = re.compile(r'([\d]?[\s]?\D+)[\s]?(\d+)')
+    # Match a book chapter:verse reference.
+    chap_verse_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*(\d+):(\d+[[,-]\d+]*)')
+    # Match a book chapter reference.
+    chap_regx = re.compile(r'([\d]?[\s]*\D+)[\s]*(\d+)')
     verse_set = set()
     for ref in verse_ref_list:
-        #if not ref[-1].isdigit():
-        if chap_verse_regx.match(ref):
-            verse_set.add(Sword.VerseKey(ref).getText())
-        else:
-            book_chap = chap_regx.match(ref)
-            if book_chap:
-                # Only a book and chapter were given so we get that entire
-                # chapter.
-                book, chap = book_chap.groups()
-                verse_set.update(ChapterIter(book, chap))
+        ref = ''.join(ref)
+        chap_verse_m = chap_verse_regx.match(ref)
+        if chap_verse_m:
+            #verse_set.add(Sword.VerseKey(ref).getText())
+            book, chap, verses = chap_verse_m.groups()
+            print(chap_verse_m.groups(), ref)
+            exit()
+            if ',' in verses:
+                for verse in verses.split(','):
+                    new_ref = '%s%s:%s' % (book, chap, verse)
+                    verse_set.add(Sword.VerseKey(new_ref).getText())
             else:
-                # No verse or chapter were given so we will get the entire
-                # book.
-                verse_set.update(BookIter(ref))
+                first, last = verses.split('-')
+                start = '%s%s:%s' % (book, chap, first)
+                end = '%s%s:%s' % (book, chap, last)
+                verse_set.update(VerseIter(start, end))
+            continue
+        book_chap = chap_regx.match(ref)
+        if book_chap:
+            # Only a book and chapter were given so we get that entire
+            # chapter.
+            book, chap = book_chap.groups()
+            verse_set.update(ChapterIter(book, chap))
+        else:
+            # No verse or chapter were given so we will get the entire
+            # book.
+            verse_set.update(BookIter(ref))
 
     return verse_set
 
@@ -377,7 +480,7 @@ class VerseList(object):
         if not self:
             return []
 
-        verse_iter = VerseIter(iter(self), module=self._module_name)
+        verse_iter = VerseTextIter(iter(self), module=self._module_name)
         verse_iter.morph = self._morphology
         verse_iter.strongs = self._strongs
 
@@ -489,56 +592,7 @@ class SearchedList(VerseList):
         return super(SearchedList, self)._highlight_text(verse_text)
 
 
-class VerseRefIter(object):
-    """ Iterator of verse references.
-
-    """
-
-    def __init__(self, start, end='Revelation of John 22:21'):
-        """ Setup the start and end references of the range.
-
-        """
-
-        self._start = Sword.VerseKey(start)
-        self._end = Sword.VerseKey(end)
-
-        self._verse = Sword.VerseKey(start)
-        self._verse_ref = ''
-
-    def __next__(self):
-        """ Returns the next verse reference.
-
-        """
-
-        # End the iteration when we reach the end of the range.
-        if self._verse_ref == self._end.getText():
-            raise StopIteration()
-
-        # Get the current verse reference.
-        self._verse_ref = self._verse.getText()
-
-        # Load the next verse in the range.
-        self._verse.increment()
-
-        # Return only the reference.
-        return self._verse_ref
-
-    def __iter__(self):
-        """ Returns an iterator of self.
-
-        """
-
-        return self
-
-    def next(self):
-        """ Returns the next verse reference.
-
-        """
-
-        return self.__next__()
-
-
-class VerseIter(object):
+class VerseTextIter(object):
     """ An iterable object for accessing verses in the Bible.  Maybe it will
     be easier maybe not.
 
@@ -581,13 +635,11 @@ class VerseIter(object):
         """
 
         # Retrieve the next reference.
-        self._verse_ref = next(self._ref_iter)
+        verse_ref = next(self._ref_iter)
 
         # Set the verse and render the text.
-        verse_text = self._get_text(self._verse_ref)
-        #self._module.setKey(Sword.VerseKey(self._verse_ref))
-        #verse_text = self._module.RenderText()
-
+        verse_text = self._get_text(verse_ref)
+        self._verse_ref = self._module.getKeyText()
 
         return (self._verse_ref, verse_text)
 
@@ -604,7 +656,7 @@ class VerseIter(object):
 
         """
 
-        self._module.setKey(Sword.VerseKey(self._verse_ref))
+        self._module.setKey(Sword.VerseKey(verse_ref))
         verse_text = self._module.RenderText()
         verse_text = '%s %s' % (self._get_heading(), verse_text)
         return verse_text
@@ -679,7 +731,7 @@ class VerseIter(object):
     def morph(self, value): pass
 
 
-class FormatVerseIter(VerseIter):
+class FormatVerseTextIter(VerseTextIter):
     """ A Formated verse iter.
 
     """
@@ -689,7 +741,7 @@ class FormatVerseIter(VerseIter):
 
         """
 
-        super(FormatVerseIter, self).__init__(reference_iter, module, markup)
+        super(FormatVerseTextIter, self).__init__(reference_iter, module, markup)
 
         self._strongs_regx = re.compile(r'<([GH]\d*)>')
         self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
@@ -711,7 +763,7 @@ class FormatVerseIter(VerseIter):
         """
 
         # First get the original text.
-        verse_text = super(FormatVerseIter, self)._get_text(verse_ref)
+        verse_text = super(FormatVerseTextIter, self)._get_text(verse_ref)
 
         verse_text = verse_text.strip()
         verse_text = self._highlight_text(verse_text)
@@ -744,7 +796,57 @@ class FormatVerseIter(VerseIter):
         return verse_text
 
 
-class BookIter(VerseRefIter):
+class VerseIter(object):
+    """ Iterator of verse references.
+
+    """
+
+    def __init__(self, start, end='Revelation of John 22:21'):
+        """ Setup the start and end references of the range.
+
+        """
+
+        start, end = sorted([start, end], key=sort_key)
+        self._start = Sword.VerseKey(start)
+        self._end = Sword.VerseKey(end)
+
+        self._verse = Sword.VerseKey(start)
+        self._verse_ref = ''
+
+    def __next__(self):
+        """ Returns the next verse reference.
+
+        """
+
+        # End the iteration when we reach the end of the range.
+        if self._verse_ref == self._end.getText():
+            raise StopIteration()
+
+        # Get the current verse reference.
+        self._verse_ref = self._verse.getText()
+
+        # Load the next verse in the range.
+        self._verse.increment()
+
+        # Return only the reference.
+        return self._verse_ref
+
+    def __iter__(self):
+        """ Returns an iterator of self.
+
+        """
+
+        return self
+
+    def next(self):
+        """ Returns the next verse reference.
+
+        """
+
+        return self.__next__()
+
+
+class BookIter(VerseIter):
     """ Iterates over just one book.
 
     """
@@ -762,7 +864,7 @@ class BookIter(VerseRefIter):
         super(BookIter, self).__init__(start, end)
 
 
-class ChapterIter(VerseRefIter):
+class ChapterIter(VerseIter):
     """ Iterates over just one chapter.
 
     """
@@ -882,7 +984,7 @@ class IndexTar(TarFile):
 
 
 class IndexDbm(object):
-    """ A gnu-dbm database writer.
+    """ A dbm database writer.
 
     """
 
@@ -1093,7 +1195,7 @@ class IndexBible(object):
         """
 
         book_iter = BookIter(book_name)
-        verse_iter = VerseIter(book_iter, self._module_name)
+        verse_iter = VerseTextIter(book_iter, self._module_name)
         verse_iter.strongs = verse_iter.morph = True
 
         for verse_ref, verse_text in verse_iter:
@@ -1132,21 +1234,6 @@ class IndexBible(object):
                 self._morph_dict:
             self.build_index()
             #self._word_dict['hello'] = ['this', 'is', 'a', 'test']
-
-        #try:
-            #for name, dic in self._index_dict.items():
-                #index_shelve = shelve.open('%s.shelve' % name)
-                #print("Writing %s.shelve..." % name, file=stderr)
-                #index_shelve.update(dic)
-        #except Exception as err:
-            #print("Error writing index %s: %s" % (name, err))
-        #finally:
-            #index_shelve.close()
-
-        for name, dic in self._index_dict.items():
-            with IndexDbm('%s.dbm' % name, 'nf') as index_file:
-                print("Writing %s..." % name, file=stderr)
-                index_file.write_dict(dic)
         #with IndexTar('%s.tar' % self._module_name, 'w') as index_file:
             #for name, dic in self._index_dict.items():
                 #print("Writing %s..." % name, file=stderr)
@@ -1155,6 +1242,11 @@ class IndexBible(object):
             #print("Writing %s..." % name, file=stderr)
             #with open(name, 'w') as index_file:
                 #json.dump(index_file, dic, indent=4)
+
+        for name, dic in self._index_dict.items():
+            with IndexDbm('%s.dbm' % name, 'nf') as index_file:
+                print("Writing %s..." % name, file=stderr)
+                index_file.write_dict(dic)
 
 
 class BibleSearch(object):
@@ -1188,7 +1280,6 @@ class BibleSearch(object):
 
         # The range to search in.
         self._range_set = set()
-
 
         if not strongs and not morph:
             filename = 'word.dump' if not case_sensitive else 'case_word.dump'
@@ -1230,18 +1321,17 @@ class BibleSearch(object):
         if search_range:
             self._range_set = parse_range(search_range)
 
-        # Get rid of any non-alphanumeric characters from the search
-        # string.
-        if not self._strongs and not self._morph:
-            search_str = self._clean_text(' '.join(search_list)).strip()
-            if not self._case_sensitive:
-                search_str = search_str.lower()
-        else:
-            search_str = ' '.join(search_list).upper().strip()
-
         if regex:
             result_set = self._regex_search(' '.join(search_list))
         else:
+            # Get rid of any non-alphanumeric characters from the search
+            # string.
+            if not self._strongs and not self._morph:
+                search_str = self._clean_text(' '.join(search_list)).strip()
+                if not self._case_sensitive:
+                    search_str = search_str.lower()
+            else:
+                search_str = ' '.join(search_list).upper().strip()
             # Load the index.
             self._indexed_dict = self._load_index(set(search_str.split())) 
             result_set = self._search(search_str, phrase, search_any)
@@ -1272,14 +1362,6 @@ class BibleSearch(object):
         with IndexDbm('%s.dbm' % filename, 'r') as dbm_dict:
             for i in search_set:
                 index_dict[i] = dbm_dict.read_list(i)
-        return index_dict
-        try:
-            shelve_dict = shelve.open('%s.shelve' % filename, 'r')
-            for i in search_set:
-                index_dict[i] = shelve_dict[i][:]
-            shelve_dict.close()
-        except Exception as err:
-            print("Error loading index %s: %s" % (filename, err))
         return index_dict
         try:
             with IndexTar('%s.tar' % self._module_name, 'r') as index_file:
@@ -1332,9 +1414,13 @@ class BibleSearch(object):
             # verses.  This gets only the items in both sets.
             ref_list = self._range_set.intersection(ref_list)
 
-        verse_iter = VerseIter(verse_list_iter(set(ref_list)))
+        print("Creating verse iter...", end='', file=stderr)
+        stderr.flush()
+        verse_iter = VerseTextIter(verse_list_iter(set(ref_list)))
         verse_iter.strongs = self._strongs
         verse_iter.morph = self._morph
+        print("Done...", end='', file=stderr)
+        stderr.flush()
 
         search_list = search_str.split()
         # Get this out here so we can maybe save a little time later.
@@ -1362,7 +1448,6 @@ class BibleSearch(object):
                 found_set.add(verse_ref)
             continue
 
-            # This one might be faster.
             # Jump from slice to slice.  Only looking at slices that are the
             # size of the search string, and that begin with the first item in
             # the search string.
@@ -1425,9 +1510,9 @@ class BibleSearch(object):
         search_regx = re.compile(r'%s' % search_str, flags)
 
         if self._range_set:
-            verse_iter = VerseIter(verse_list_iter(self._range_set))
+            verse_iter = VerseTextIter(verse_list_iter(self._range_set))
         else:
-            verse_iter = VerseIter(VerseRefIter('Genesis 1:1'))
+            verse_iter = VerseTextIter(VerseIter('Genesis 1:1'))
         strongs = verse_iter.strongs = self._strongs
         morph = verse_iter.morph = self._morph
 
