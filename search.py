@@ -33,15 +33,22 @@ BibleSearch:  Can index and search the 'KJV' sword module using different types 
 
 """
 
-from sys import argv, exit, stdout, stderr
+from sys import argv, exit, stderr
 from optparse import OptionParser
-from time import strftime
+from time import strftime, mktime, localtime
 from textwrap import wrap, fill, TextWrapper
 from struct import unpack
 from termios import TIOCGWINSZ
 from fcntl import ioctl
+from collections import defaultdict
+from tarfile import TarFile, TarInfo
+from io import BytesIO
+from threading import Thread
+import dbm
 import os
 import json
+import shelve
+import gzip
 import re
 import locale
 
@@ -49,6 +56,20 @@ import Sword
 
 # Key function used to sort a list of verse references.
 sort_key = lambda r: Sword.VerseKey(r).Index()
+
+def get_encoding():
+    """ Figure out the encoding to use for strings.
+
+    """
+
+    # Hopefully get the correct encoding to use.
+    lang, enc = locale.getlocale()
+    if not lang or lang == 'C':
+        encoding = 'ascii'
+    else:
+        encoding = enc
+
+    return encoding
 
 def parse_range(ref_str):
     """ Returns a set of verse references in the ranges provided.
@@ -134,7 +155,7 @@ def add_context(ref_set, count=1):
     """
 
     # Make a copy to work on.
-    clone_set = ref_set.copy()
+    clone_set = set(ref_set)
     for ref in ref_set:
         # This seems like a realy hackish way to do this, but it seems to
         # work.  First we make sure to not decrement back too far, then
@@ -202,6 +223,20 @@ class Lookup(object):
         return fill(self._module.RenderText(), screen_size()[1])
 
 
+class SortedVerseTuple(tuple):
+    """ An immutable set of sorted verse references.
+
+    """
+
+    def __init__(self, reference_set=set()):
+        """ Initialize the set.
+
+        """
+
+        self._sorted_list = sorted(reference_set, key=sort_key)
+        super(VerseTuple, self).__init__(self._sorted_list)
+
+
 class VerseList(object):
     """ A container for holding and rendering sets of verses.
 
@@ -233,13 +268,6 @@ class VerseList(object):
                                                  self._end_color)
         self._morph_highlight = '(%s\\1%s)' % (morph_color,
                                                self._end_color)
-
-        # Hopefully get the correct encoding to use.
-        lang, enc = locale.getlocale()
-        if not lang or lang == 'C':
-            self._enc = 'ascii'
-        else:
-            self._enc = enc
 
     def __iter__(self):
         """ Returns an iter over the internal set.
@@ -356,6 +384,8 @@ class VerseList(object):
         verse_list = []
         wrapper = TextWrapper(width=screen_size()[1])
 
+        encoding = get_encoding()
+
         for verse_ref, verse_text in verse_iter:
             verse_text = verse_text.strip()
             verse_text = self._highlight_text(verse_text)
@@ -363,10 +393,10 @@ class VerseList(object):
             # decode it again to put it in the string.  Do this or it will
             # either have an error in non-utf8 environments or it will show
             # ugly characters.  Hasn't been tested thoroughly.
-            verse_text = verse_text.encode(self._enc, 'ignore')
+            verse_text = verse_text.encode(encoding, 'ignore')
             verse_text = "%s%s%s: %s" % (self._ref_color, verse_ref.strip(), 
                                            self._end_color,
-                                           verse_text.decode(self._enc, 
+                                           verse_text.decode(encoding, 
                                                              'ignore'))
             # Make a list of all the 'reference: text' strings.
             if '\n' in self._end:
@@ -524,9 +554,15 @@ class VerseIter(object):
         # We don't own this or it will segfault.
         markup.thisown = False
         self._library = Sword.SWMgr(markup)
+        self._library.setGlobalOption("Headings", "On")
         self._library.setGlobalOption("Cross-references", "Off")
         self._library.setGlobalOption("Strong's Numbers", "Off")
         self._library.setGlobalOption("Morphological Tags", "Off")
+        
+        # Strings for finding the heading.
+        self._head_str = Sword.SWBuf('Heading')
+        self._preverse_str = Sword.SWBuf('Preverse')
+        self._canon_str = Sword.SWBuf('canonical')
 
         self._module = self._library.getModule(module)
 
@@ -548,8 +584,10 @@ class VerseIter(object):
         self._verse_ref = next(self._ref_iter)
 
         # Set the verse and render the text.
-        self._module.setKey(Sword.VerseKey(self._verse_ref))
-        verse_text = self._module.RenderText()
+        verse_text = self._get_text(self._verse_ref)
+        #self._module.setKey(Sword.VerseKey(self._verse_ref))
+        #verse_text = self._module.RenderText()
+
 
         return (self._verse_ref, verse_text)
 
@@ -559,6 +597,42 @@ class VerseIter(object):
         """
 
         return self
+
+    def _get_text(self, verse_ref):
+        """ Returns the verse text.  Override this to produce formatted verse
+        text.
+
+        """
+
+        self._module.setKey(Sword.VerseKey(self._verse_ref))
+        verse_text = self._module.RenderText()
+        verse_text = '%s %s' % (self._get_heading(), verse_text)
+        return verse_text
+
+    def _get_heading(self):
+        """ Returns the verse heading if there is one.
+
+        """
+
+        attr_map = self._module.getEntryAttributesMap()
+        heading_list = []
+        head_str = self._head_str
+        preverse_str = self._preverse_str
+        canon_str = self._canon_str
+        if head_str in attr_map:
+            heading_attrs = attr_map[head_str]
+            if self._preverse_str in heading_attrs:
+                preverse_attrs = heading_attrs[preverse_str]
+                for k, attrs in heading_attrs.items():
+                    if canon_str in attrs:
+                        canonical = (attrs[canon_str].c_str() == 'true')
+                    if k in preverse_attrs and canonical:
+                        heading_list.append(preverse_attrs[k].c_str())
+
+        if heading_list:
+            return self._module.RenderText(''.join(heading_list))
+        else:
+            return ''
 
     def _get_options(func):
         """ Wraps the strongs and morph getter properties.
@@ -605,6 +679,71 @@ class VerseIter(object):
     def morph(self, value): pass
 
 
+class FormatVerseIter(VerseIter):
+    """ A Formated verse iter.
+
+    """
+
+    def __init__(self, reference_iter, module='KJV', markup=Sword.FMT_PLAIN):
+        """ Initialize.
+
+        """
+
+        super(FormatVerseIter, self).__init__(reference_iter, module, markup)
+
+        self._strongs_regx = re.compile(r'<([GH]\d*)>')
+        self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
+        self._ref_color = '\033[32m'
+        self._end_color = '\033[m'
+
+        strongs_color = '\033[36m'
+        morph_color = '\033[35m'
+        self._strongs_highlight = '<%s\\1%s>' % (strongs_color, 
+                                                 self._end_color)
+        self._morph_highlight = '(%s\\1%s)' % (morph_color,
+                                               self._end_color)
+
+        self._enc = get_encoding()
+
+    def _get_text(self, verse_ref):
+        """ Returns a formated version of the verse text.
+
+        """
+
+        # First get the original text.
+        verse_text = super(FormatVerseIter, self)._get_text(verse_ref)
+
+        verse_text = verse_text.strip()
+        verse_text = self._highlight_text(verse_text)
+        # Convoluted way to do it, but first encode the string, then
+        # decode it again to put it in the string.  Do this or it will
+        # either have an error in non-utf8 environments or it will show
+        # ugly characters.  Hasn't been tested thoroughly.
+        verse_text = verse_text.encode(self._enc, 'ignore')
+        verse_text = "%s%s%s: %s" % (self._ref_color, verse_ref.strip(), 
+                                       self._end_color,
+                                       verse_text.decode(self._enc, 
+                                                         'ignore'))
+        # Make a list of all the 'reference: text' strings.
+        if '\n' in self._end:
+            verse_text = fill(verse_text, width=screen_size()[1])
+
+        # Return a formated version
+        return verse_text
+
+    def _highlight_text(self, verse_text):
+        """ Returns a highlighted version of verse_text.  All Strong's
+        numbers, and morphological tags are hightlighted.
+
+        """
+
+        verse_text = self._strongs_regx.sub(self._strongs_highlight,
+                                            verse_text)
+        verse_text = self._morph_regx.sub(self._morph_highlight, verse_text)
+
+        return verse_text
+
+
 class BookIter(VerseRefIter):
     """ Iterates over just one book.
 
@@ -640,6 +779,212 @@ class ChapterIter(VerseRefIter):
         super(ChapterIter, self).__init__(start, end)
 
 
+class IndexTar(TarFile):
+    """ A tarfile object to write directly to a tar file bypassing the 
+    filesystem.  It uses a BytesIO stream as the file object when writing
+    and the standard tarfile.ExFileObject for reading.  It as to encode any
+    strings to bytes before writing, and decode them after reading.
+
+    """
+
+    def __init__(self, name=None, mode='r', compressionlevel=9):
+        """ Create a gzip file to use as the fileobj to TarFile.
+
+        """
+
+        if ':' in mode:
+            mode = mode[0]
+            fileobj = open(name, mode + b)
+            gzfile = gzip.GzipFile(name, mode, compresionlevel, fileobj)
+        else:
+            gzfile = None
+        super(IndexTar, self).__init__(name, mode, gzfile) 
+
+    def _encoding(self):
+        """ Figure out the encoding to use for strings.
+
+        """
+
+        # Hopefully get the correct encoding to use.
+        lang, enc = locale.getlocale()
+        if not lang or lang == 'C':
+            encoding = 'ascii'
+        else:
+            encoding = enc
+
+        return encoding
+
+    def write_string(self, name, str_buffer):
+        """ Write the buffer string to the tar file under the given name.
+
+        """
+
+        # Encode the buffer into bytes. 
+        byte_buffer = str_buffer.encode(self._encoding(), 'replace')
+
+        # Create a tarinfo for a file.
+        tarinfo = TarInfo(name)
+        tarinfo.size = len(byte_buffer)
+        tarinfo.mtime = int(mktime(localtime()))
+
+        # Fill the byte io object.
+        byte_io = BytesIO()
+        byte_io.write(byte_buffer)
+        byte_io.seek(0)
+
+        # Write buffer to tar file.
+        self.addfile(tarinfo=tarinfo, fileobj=byte_io)
+        byte_io.close()
+
+        return len(str_buffer)
+
+    def read_string(self, name):
+        """ Read the named buffer out of the tarfile.
+
+        """
+
+        try:
+            # Get a file object to read the data from.
+            ex_file = self.extractfile(name)
+            # Read bytes from the tar.
+            byte_buffer = ex_file.read()
+        except Exception as err:
+            print("Error reading %s: %s" % (name, err), file=stderr)
+            return None
+
+        # Decode the buffer back into a string, and return it.
+        return byte_buffer.decode(self._encoding(), 'replace')
+
+    def __enter__(self):
+        """ Add the functionality to use pythons with statement.
+
+        """
+
+        try:
+            return self
+        except Exception as err:
+            print("Error in __enter__: %s" % err, file=stderr)
+            return None
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """ Close the file and exit.
+
+        """
+
+        try:
+            self.close()
+            if exc_type:
+                return False
+            return True
+        except Exception as err:
+            print("Error in __exit__: %s" % err, file=stderr)
+            return False
+
+
+class IndexDbm(object):
+    """ A gnu-dbm database writer.
+
+    """
+
+
+    def __init__(self, name=None, mode='r'):
+        """ Create a databse.
+
+        """
+
+        self._dbm = dbm.open(name, mode)
+
+    def _encoding(self):
+        """ Figure out the encoding to use for strings.
+
+        """
+
+        # Hopefully get the correct encoding to use.
+        lang, enc = locale.getlocale()
+        if not lang or lang == 'C':
+            encoding = 'ascii'
+        else:
+            encoding = enc
+
+        return encoding
+
+    def write_list(self, name, lst):
+        """ Write the list database under the given name.
+
+        """
+
+        # Encode the buffer into bytes. 
+        byte_buffer = json.dumps(lst).encode(self._encoding(), 'replace')
+
+        # Write buffer to tar file.
+        self._dbm[name] = byte_buffer
+
+        return len(byte_buffer)
+
+    def write_dict(self, dic):
+        """ Write a dictionary to the database.
+        
+        """
+
+        for k, v in dic.items():
+            self.write_list(k, v)
+
+        return len(dic)
+
+    def read_list(self, name):
+        """ Read the named list out of the database.
+
+        """
+
+        try:
+            str_buffer = self._dbm[name].decode(self._encoding(), 'replace')
+            lst = json.loads(str_buffer)
+        except Exception as err:
+            print("Error reading %s: %s" % (name, err), file=stderr)
+            return None
+
+        return lst
+
+
+    def read_dict(self):
+        """ Read out the entire dictionary.
+
+        """
+
+        temp_dict = {}
+        key = self._dbm.firstkey()
+        while key:
+            temp_dict[key] = self._dbm[key]
+            key = self._dbm.nextkey(key)
+
+        return temp_dict
+
+    def __enter__(self):
+        """ Add the functionality to use pythons with statement.
+
+        """
+
+        try:
+            return self
+        except Exception as err:
+            print("Error in __enter__: %s" % err, file=stderr)
+            return None
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """ Close the file and exit.
+
+        """
+
+        try:
+            self._dbm.close()
+            if exc_type:
+                return False
+            return True
+        except Exception as err:
+            print("Error in __exit__: %s" % err, file=stderr)
+            return False
+
+
 class IndexBible(object):
     """ Index the bible by Strong's Numbers, Morphological Tags, and words.
 
@@ -660,10 +1005,10 @@ class IndexBible(object):
         self._strongs_regx = re.compile(r'<([GH]\d*)>')
         self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
 
-        self._strongs_dict = {}
-        self._morph_dict = {}
-        self._word_dict = {}
-        self._case_word_dict = {}
+        self._strongs_dict = defaultdict(list)
+        self._morph_dict = defaultdict(list)
+        self._word_dict = defaultdict(list)
+        self._case_word_dict = defaultdict(list)
 
         self._index_dict = {
                 'strongs.dump': self._strongs_dict,
@@ -690,9 +1035,7 @@ class IndexBible(object):
 
         strongs_list = set(self._strongs_regx.findall(verse_text))
         for strongs_num in strongs_list:
-            temp_list = self._strongs_dict.get(strongs_num, [])
-            temp_list.append(verse_ref)
-            self._strongs_dict[strongs_num] = temp_list
+            self._strongs_dict[strongs_num].append(verse_ref)
 
     def _index_morph(self, verse_ref, verse_text):
         """ Update the modules mophological dictionary from the verse text.
@@ -701,9 +1044,7 @@ class IndexBible(object):
 
         morph_list = set(self._morph_regx.findall(verse_text))
         for morph_num in morph_list:
-            temp_list = self._morph_dict.get(morph_num, [])
-            temp_list.append(verse_ref)
-            self._morph_dict[morph_num] = temp_list
+            self._morph_dict[morph_num].append(verse_ref)
 
     def _index_words(self, verse_ref, verse_text):
         """ Update the modules word dictionary from the verse text.
@@ -736,9 +1077,7 @@ class IndexBible(object):
         
         for word in verse_set:
             if word:
-                temp_list = self._word_dict.get(word, [])
-                temp_list.append(verse_ref)
-                self._word_dict[word] = temp_list
+                self._word_dict[word].append(verse_ref)
 
         # Include the capitalized words for case sensitive search.
         case_verse_set = set(verse_text.split())
@@ -746,9 +1085,7 @@ class IndexBible(object):
 
         for word in case_verse_set:
             if word:
-                temp_list = self._case_word_dict.get(word, [])
-                temp_list.append(verse_ref)
-                self._case_word_dict[word] = temp_list
+                self._case_word_dict[word].append(verse_ref)
 
     def _index_book(self, book_name="Genesis"):
         """ Creates indexes for strongs, morphology and words.
@@ -761,8 +1098,8 @@ class IndexBible(object):
 
         for verse_ref, verse_text in verse_iter:
             print('\033[%dD\033[KIndexing...%s' % \
-                    (len(verse_ref) + 20, verse_ref), end='')
-            stdout.flush()
+                    (len(verse_ref) + 20, verse_ref), file=stderr, end='')
+            stderr.flush()
 
             self._index_strongs(verse_ref, verse_text)
             self._index_morph(verse_ref, verse_text)
@@ -774,11 +1111,12 @@ class IndexBible(object):
 
         """
 
-        print("Indexing %s could take a while..." % self._module_name)
+        print("Indexing %s could take a while..." % self._module_name, 
+              file=stderr)
         for book in self._book_gen():
             self._index_book(book)
 
-        print('\nDone.')
+        print('\nDone.', file=stderr)
 
     def write_indexes(self):
         """ Write all the index dictionaries to their respective files.  If
@@ -793,11 +1131,30 @@ class IndexBible(object):
         if not self._word_dict or not self._strongs_dict or not \
                 self._morph_dict:
             self.build_index()
+            #self._word_dict['hello'] = ['this', 'is', 'a', 'test']
+
+        #try:
+            #for name, dic in self._index_dict.items():
+                #index_shelve = shelve.open('%s.shelve' % name)
+                #print("Writing %s.shelve..." % name, file=stderr)
+                #index_shelve.update(dic)
+        #except Exception as err:
+            #print("Error writing index %s: %s" % (name, err))
+        #finally:
+            #index_shelve.close()
 
         for name, dic in self._index_dict.items():
-            print("Writing %s..." % name)
-            with open(name, 'w') as index_file:
-                index_file.write(json.dumps(dic, indent=4))
+            with IndexDbm('%s.dbm' % name, 'nf') as index_file:
+                print("Writing %s..." % name, file=stderr)
+                index_file.write_dict(dic)
+        #with IndexTar('%s.tar' % self._module_name, 'w') as index_file:
+            #for name, dic in self._index_dict.items():
+                #print("Writing %s..." % name, file=stderr)
+                #index_file.write_string(name, json.dumps(dic, indent=4))
+        #for name, dic in self._index_dict.items():
+            #print("Writing %s..." % name, file=stderr)
+            #with open(name, 'w') as index_file:
+                #json.dump(index_file, dic, indent=4)
 
 
 class BibleSearch(object):
@@ -819,6 +1176,7 @@ class BibleSearch(object):
         self._strongs = strongs
         self._morph = morph
         self._no_punct = no_punctuation
+        self._module_name = module
 
         # Cleanup regular expressions.
         self._non_alnum_regx = re.compile(r'\W')
@@ -831,8 +1189,14 @@ class BibleSearch(object):
         # The range to search in.
         self._range_set = set()
 
-        # Load the index.
-        self._indexed_dict = self._load_index(case_sensitive, strongs, morph)
+
+        if not strongs and not morph:
+            filename = 'word.dump' if not case_sensitive else 'case_word.dump'
+        else:
+            filename = 'strongs.dump' if strongs else 'morph.dump'
+        self._filename = filename
+
+        self._indexed_dict = {}
 
     def _clean_text(self, text):
         """ Return a clean (only alphanumeric) text of the provided string.
@@ -878,7 +1242,13 @@ class BibleSearch(object):
         if regex:
             result_set = self._regex_search(' '.join(search_list))
         else:
+            # Load the index.
+            self._indexed_dict = self._load_index(set(search_str.split())) 
             result_set = self._search(search_str, phrase, search_any)
+
+        count = len(result_set)
+        print("Found %s verse%s." % (count, 's' if count != 1 else ''), 
+              file=stderr)
 
         if phrase or regex:
             # Highlight the phrase.  Doesn't work if there were strange
@@ -887,29 +1257,37 @@ class BibleSearch(object):
         else:
             highlight_string = '|'.join(' '.join(search_list).split())
 
-        count = len(result_set)
-        print("Found %s verse%s." % (count, 's' if count != 1 else ''))
-
         return SearchedList(result_set, highlight_string, phrase,
                          self._case_sensitive)
 
-    def _load_index(self, case_sensitive=False, strongs=False, morph=False):
-        """ _load_index(case_sensitive=False, strongs=False, morph=False) ->
-        Load and return a dictionary from one of the index files.
+    def _load_index(self, search_set):
+        """ _load_index(search_set) -> Load and return a dictionary from one of
+        the index files.
 
         """
 
-        if not strongs and not morph:
-            filename = 'word.dump' if not case_sensitive else 'case_word.dump'
-        else:
-            filename = 'strongs.dump' if strongs else 'morph.dump'
-
-        print("Loading %s" % filename)
+        filename = self._filename
+        print("Loading %s" % filename, file=stderr)
+        index_dict = {}
+        with IndexDbm('%s.dbm' % filename, 'r') as dbm_dict:
+            for i in search_set:
+                index_dict[i] = dbm_dict.read_list(i)
+        return index_dict
         try:
-            with open(filename, 'r') as index_file:
-                index_dict = json.loads(index_file.read())
+            shelve_dict = shelve.open('%s.shelve' % filename, 'r')
+            for i in search_set:
+                index_dict[i] = shelve_dict[i][:]
+            shelve_dict.close()
+        except Exception as err:
+            print("Error loading index %s: %s" % (filename, err))
+        return index_dict
+        try:
+            with IndexTar('%s.tar' % self._module_name, 'r') as index_file:
+                index_dict = json.loads(index_file.read_string(filename))
+            #with open(filename, 'r') as index_file:
+                #index_dict =json.load(index_file)
         except IOError as err:
-            print("Error loading file %s: %s" % (filename, err))
+            print("Error loading file %s: %s" % (filename, err), file=stderr)
 
         return index_dict
 
@@ -925,21 +1303,22 @@ class BibleSearch(object):
         if not phrase or len(search_list) == 1:
             if not search_any:
                 print('Searching for "%s"...' % \
-                        ' AND '.join(search_list), end='')
+                        ' AND '.join(search_list), end='', file=stderr)
                 found_verses = self._set_intersect(search_list) 
             else:
                 print('Searching for "%s"...' % \
-                        ' OR '.join(search_list), end='')
+                        ' OR '.join(search_list), end='', file=stderr)
                 found_verses = self._set_union(search_list)
             if self._range_set:
                 found_verses = found_verses.intersection(self._range_set)
         else:
-            print('Searching for phrase "%s"...' % search_str, end='')
-            stdout.flush()
+            print('Searching for phrase "%s"...' % search_str, end='', 
+                  file=stderr)
+            stderr.flush()
             verse_list = self._set_intersect(search_list)
             found_verses = self._phrase_search(search_str, verse_list)
 
-        print("Done.")
+        print("Done.", file=stderr)
 
         return found_verses
 
@@ -964,8 +1343,8 @@ class BibleSearch(object):
         for verse_ref, verse_text in verse_iter:
             # This slows it down.
             #print('\033[%dD\033[KSearching...%s' % \
-                    #(len(verse_ref) + 20, verse_ref), end='')
-            #stdout.flush()
+                    #(len(verse_ref) + 20, verse_ref), end='', file=stderr)
+            #stderr.flush()
             if self._strongs:
                 verse_list = self._strongs_regx.findall(verse_text)
             elif self._morph:
@@ -979,9 +1358,9 @@ class BibleSearch(object):
                 continue
 
             # This one seems faster sometimes.
-            #if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
-                #found_set.add(verse_ref)
-            #continue
+            if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
+                found_set.add(verse_ref)
+            continue
 
             # This one might be faster.
             # Jump from slice to slice.  Only looking at slices that are the
@@ -1038,10 +1417,12 @@ class BibleSearch(object):
 
         """
 
-        print("Searching using the regular expression '%s'" % search_str)
+        print("Searching using the regular expression '%s'" % search_str,
+              file=stderr)
 
         found_verses = set()
-        search_regx = re.compile(r'%s' % search_str)
+        flags = re.I if not self._case_sensitive else 0
+        search_regx = re.compile(r'%s' % search_str, flags)
 
         if self._range_set:
             verse_iter = VerseIter(verse_list_iter(self._range_set))
@@ -1062,7 +1443,7 @@ class BibleSearch(object):
                 if search_regx.search(clean_verse_text):
                     found_verses.add(verse_ref)
 
-        print("...Done.")
+        print("...Done.", file=stderr)
 
         return found_verses
 
@@ -1164,12 +1545,12 @@ if __name__ == '__main__':
             verse_list = search.find(args, **options_dict)
         else:
             verse_list = lookup_verses(args, options.search_range)
-        verse_list.context = context
-        verse_list.end = ' ' if one_line else '\n'
-        verse_list.strongs = show_strongs or options.strongs
-        verse_list.morphology = show_morph or options.morph
-
         if not quiet:
+            verse_list.context = context
+            verse_list.end = ' ' if one_line else '\n'
+            verse_list.strongs = show_strongs or options.strongs
+            verse_list.morphology = show_morph or options.morph
+
             print()
             if list_only:
                 for i in verse_list:
