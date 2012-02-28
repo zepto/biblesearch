@@ -658,7 +658,6 @@ BibleSearch:  Can index and search the 'KJV' sword module using different types 
 """
 
 from sys import argv, exit
-import sys
 from cmd import Cmd
 from difflib import get_close_matches
 from os import getcwd, getenv
@@ -677,6 +676,7 @@ from itertools import product
 from xml.dom.minidom import parseString
 import dbm
 import os
+import sys
 import json
 import re
 import locale
@@ -685,7 +685,12 @@ import Sword
 
 VERBOSE_LEVEL = 1
 COLOR_LEVEL = 3
-INDEX_PATH = getcwd()
+
+# Setup the index path to '/userhome/.biblesearch', and if that doesn't exist
+# use the current working directory.
+INDEX_PATH = os.path.join(os.getenv('HOME'), '.biblesearch')
+if not os.path.isdir(INDEX_PATH):
+    INDEX_PATH = getcwd()
 
 # Highlight colors.
 highlight_color = '\033[7m'
@@ -1071,7 +1076,11 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
         for word in match.groups():
             if word:
                 info_print(word, tag=20)
-                match_text = re.sub('((?:\033\[[\d+;]*m|\\b)+%s(?:\033\[[\d+;]*m|\\b)+)' % re.escape(word), highlight_text, match_text)
+                try:
+                    match_text = re.sub('((?:\033\[[\d+;]*m|\\b)+%s(?:\033\[[\d+;]*m|\\b)+)' % re.escape(word), highlight_text, match_text)
+                except Exception as err:
+                    info_print("Error with highlighting word %s: %s" % \
+                               (word, err), tag=4)
             #match_text = match_text.replace(word, '\033[7m%s\033[m' % word) 
         #print(match_text)
         return match_text
@@ -1960,6 +1969,8 @@ class IndexBible(object):
         # lower_case is used to store lower_case words case sensitive
         # counterpart.  _Words_ is for easy key lookup for partial words.
         self._words_set = set()
+        self._strongs_set = set()
+        self._morph_set = set()
         self._module_dict.update({ 'lower_case': defaultdict(list) })
 
         self._index_dict = {
@@ -1986,6 +1997,7 @@ class IndexBible(object):
 
         strongs_list = set(self._strongs_regx.findall(verse_text))
         for strongs_num in strongs_list:
+            self._strongs_set.add(strongs_num)
             self._module_dict[strongs_num].append(verse_ref)
 
     def _index_morph(self, verse_ref, verse_text):
@@ -1995,6 +2007,7 @@ class IndexBible(object):
 
         morph_list = set(self._morph_regx.findall(verse_text))
         for morph_num in morph_list:
+            self._morph_set.add(morph_num)
             self._module_dict[morph_num].append(verse_ref)
 
     def _index_words(self, verse_ref, verse_text):
@@ -2073,6 +2086,8 @@ class IndexBible(object):
         for book in self._book_gen():
             self._index_book(book)
         self._module_dict['_words_'].extend(self._words_set)
+        self._module_dict['_strongs_'].extend(self._strongs_set)
+        self._module_dict['_morph_'].extend(self._morph_set)
 
         info_print('\nDone.')
 
@@ -2137,8 +2152,14 @@ class IndexDict(dict):
         key = self._non_key_text_regx.sub('', key).strip()
         if self._name and (key not in self):
             # Load the value from the database if we don't have it.
-            with IndexDbm('%s/%s_index_i.dbm' % (self._path, self._name), 'r') as dbm_dict:
-                self[key] = dbm_dict.get(key)
+            try:
+                with IndexDbm('%s/%s_index_i.dbm' % (self._path, self._name), 'r') as dbm_dict:
+                    self[key] = dbm_dict.get(key)
+            except Exception as err:
+                print("The index is either broken or missing.", file=sys.stderr)
+                print("Please fix it.  Re-build the index.", file=sys.stderr)
+                print("The error was: %s" % err, file=sys.stderr)
+                exit()
 
         return super(IndexDict, self).__getitem__(key)
 
@@ -2242,7 +2263,11 @@ class IndexDict(dict):
                 # A Regular expression that matches any number of word
                 # characters for every '*' in the term.
                 reg_str = '\\b%s\\b' % partial_word.replace('*', '\w*')
-                word_regx = re.compile(reg_str, flags)
+                try:
+                    word_regx = re.compile(reg_str, flags)
+                except Exception as err:
+                    print('There is a problem with the regular expression %s: %s' % (reg_str, err), file=sys.stderr)
+                    exit()
                 if word_regx.match(word):
                     temp_list = self[word]
                     if len(temp_list) < common_limit:
@@ -2488,7 +2513,11 @@ class Search(object):
             reg_str = search_terms
             info_print('\nUsing regular expression: %s\n' % reg_str, tag=2)
 
-            return re.compile(reg_str, flags)
+            try:
+                return re.compile(reg_str, flags)
+            except Exception as err:
+                print("An error occured while compiling the highlight regular expression %s: %s.  There will be no highlighting.\n" % (reg_str, err), file=sys.stderr)
+                return re.compile(r'')
 
         # This will skip words.
         not_words_str = r'\b\w+\b'
@@ -2559,7 +2588,11 @@ class Search(object):
         reg_str = space_str.join(temp_str.split())
         info_print('\nUsing regular expression: %s\n' % reg_str, tag=2)
 
-        return re.compile(reg_str, flags)
+        try:
+            return re.compile(reg_str, flags)
+        except Exception as err:
+            print("An error occured while compiling the highlight regular expression %s: %s.  There will be no highlighting.\n" % (reg_str, err), file=sys.stderr)
+            return re.compile(r'')
 
     def _sorted_iter(self, verse_ref_set):
         """ Returns an iterator over a sorted version of verse_ref_set.
@@ -2896,7 +2929,11 @@ class Search(object):
                 # A Regular expression that matches any number of word
                 # characters for every '*' in the term.
                 reg_str = '\\b%s\\b' % partial_word.replace('*', '\w*')
-                word_regx = re.compile(reg_str, flags)
+                try:
+                    word_regx = re.compile(reg_str, flags)
+                except Exception as err:
+                    print('There is a problem with the regular expression %s: %s' % (reg_str, err), file=sys.stderr)
+                    exit()
                 if word_regx.match(word):
                     yield word
 
@@ -3593,6 +3630,7 @@ class Search(object):
                 
         return set()
 
+
 class SearchCmd(Cmd):
     """ A Command line interface for searching the Bible.
 
@@ -3603,7 +3641,7 @@ class SearchCmd(Cmd):
 
         """
 
-        self.prompt = '\001[32m\002search\001[m\002> '
+        self.prompt = '\001[33m\002search\001[m\002> '
         self.intro = '''
     %s  Copyright (C) 2011  Josiah Gordon <josiahg@gmail.com>
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
@@ -3612,35 +3650,62 @@ class SearchCmd(Cmd):
 
         This is a Bible search program that searches the KJV
         sword module.  If you need help type 'help' to display a list of valid
-        commands.  For help on a specific command type 'help <command>.'  If
-        you still need help look at the source. 
+        commands.  For help on a specific command type 'help <command>.'   
+
+        Examples:
+
+        mixed 'jordan h03383'   (Finds all verses with Strong's number 'H03383'
+                                 translated 'Jordan')
+
+        concordance live        (Lists the references of all the verses with
+                                 the word 'live' in them, the Strong's number
+                                 that was used, and what the phrase is that
+                                 that Strong's number is translated as.)
+
+        concordance h02418      (Lists the references of all the verses with
+                                 the Strong's number 'H02418' and how it was
+                                 translated.  It only occures six times and all
+                                 of them are in Daniel.)
+
+        strongs h02418          (Looks up and gives the definition of the
+                                 Strong's number 'H02418.')
+
+        set range gen-mal       (Sets the range to the Old Testament.)
+
+        Just about everything has tab-completion, so you can hit tab a couple
+        of times to see all the completions to what you are typing.
+
+        If you want to see this intro again type: 'intro'
+
+        To find out more type 'help' 
+
+        (example: 'help search' will list the help for the search command.)
         
-        ''' % argv[0]
+        To exit type 'quit' or hit 'CTRL+D'
+        
+        ''' % os.path.basename(argv[0])
         super(SearchCmd, self).__init__()
-        self._quoted_regex = re.compile('''((?P<quote>'|")[^"']*(?P=quote)|[^'"]*)''')
+        self._quoted_regex = re.compile('''((?P<quote>'|").*?(?P=quote)|[^'"]*)''')
+
         # Perform the specified search.
         self._search = Search()
-        #for i in dir(self._search):
-            #if i.endswith('_search'):
-                #search_name = i[:i.find('_search')]
-                #setattr(self, 'do_%s' % search_name, self.do_search)
-                #setattr(self, 'complete_%s' % search_name,
-                        #self.complete_search)
         self._results = set()
         self._search_list = []
         self._highlight_list = []
         self._words = self._search._index_dict['_words_']
+        self._strongs = self._search._index_dict['_strongs_']
+        self._morph = self._search._index_dict['_morph_']
         self._book_list = list(book_gen())
         self._setting_dict = {
-                'search-type': 'mixed',
-                'search-strongs': False,
-                'search-morph': False,
-                'case-sensitive': False,
+                'search_type': 'mixed',
+                'search_strongs': False,
+                'search_morph': False,
+                'case_sensitive': False,
                 'context': 0, 
-                'one-line': False, 
-                'show-notes': False,
-                'show-strongs': False, 
-                'show-morph': False,
+                'one_line': False, 
+                'show_notes': False,
+                'show_strongs': False, 
+                'show_morph': False,
                 'added': True,
                 'range': '',
                 'extras': (),
@@ -3650,17 +3715,6 @@ class SearchCmd(Cmd):
                               'regex', 'eitheror', 'sword_lucene',
                               'sword_phrase', 'sword_multiword',
                               'sword_entryattrib'] 
-
-    def book_gen(self):
-        """ A Generator function that yields book names in order.
-
-        """
-
-        # Yield a list of all the book names in the bible.
-        verse_key = Sword.VerseKey('Genesis 1:1')
-        for testament in [1, 2]:
-            for book in range(1, verse_key.bookCount(testament) + 1):
-                yield(verse_key.bookName(testament, book))
 
     def _complete(self, text, line, begidx, endidx, complete_list):
         """ Return a list of matching text.
@@ -3672,7 +3726,7 @@ class SearchCmd(Cmd):
             # If nothing was found try words that contain the text.
             retlist = [i for i in complete_list if text in i]
         if not retlist:
-            # Finally try matching in case the user misspelled.
+            # Finally try matching misspelled words.
             retlist = get_close_matches(text, complete_list, cutoff=0.7)
         return retlist
 
@@ -3692,6 +3746,34 @@ class SearchCmd(Cmd):
 
         return arg_list
 
+    def do_test(self, args):
+        """ A Test.
+
+        """
+
+        quoted_regex = re.compile('''((?P<quote>'|").*?(?P=quote)|[^'"]*)''')
+        print(quoted_regex.findall(args))
+        print(self._get_list(args))
+
+    def _print(self, text_iter):
+        """ Print all the text breaking it and screens so the user can read it
+        all.
+
+        """
+
+        count = 0
+        for verse in text_iter:
+            count += len(verse.splitlines()) if '\n' in verse else 1
+            print(verse)
+            if count >= screen_size()[0] - 4:
+                count = 0
+                try:
+                    input('[Press enter to see more, or CTRL+D to end.]')
+                    print('[1A[K', end='')
+                except:
+                    print('[G[K', end='')
+                    break
+
     def precmd(self, line):
         """ Set the correct settings before running the line.
 
@@ -3708,7 +3790,7 @@ class SearchCmd(Cmd):
                 search_type = search_type[:5]
             else:
                 self._setting_dict['extras'] = ()
-            self._setting_dict['search-type'] = search_type
+            self._setting_dict['search_type'] = search_type
         return line
 
     def postcmd(self, stop, line):
@@ -3721,7 +3803,7 @@ class SearchCmd(Cmd):
 
         cmd = line.split()[0]
         if cmd == 'lookup':
-            self.onecmd('show_results %s' % line)
+            self.onecmd('show_results')
         return stop
 
     def completedefault(self, text, line, begidx, endidx):
@@ -3731,6 +3813,13 @@ class SearchCmd(Cmd):
 
         words_list = self._words
         return self._complete(text, line, begidx, endidx, words_list)
+
+    def do_shell(self, args):
+        """ Execute shell commands.
+
+        """
+
+        os.system(args)
 
     def do_concordance(self, args):
         """ Perform a concordance like search.
@@ -3743,10 +3832,10 @@ class SearchCmd(Cmd):
         arg_list = self._get_list(args)
 
         # Search.
-        strongs_search = self._setting_dict['search-strongs']
-        morph_search = self._setting_dict['search-morph']
+        strongs_search = self._setting_dict['search_strongs']
+        morph_search = self._setting_dict['search_morph']
         search_range = self._setting_dict['range']
-        case_sensitive = self._setting_dict['case-sensitive']
+        case_sensitive = self._setting_dict['case_sensitive']
         search_added = self._setting_dict['added']
         self._search.test4_search(arg_list, strongs_search, morph_search,
                                   search_added, case_sensitive, search_range)
@@ -3780,6 +3869,34 @@ class SearchCmd(Cmd):
 
         return True
 
+    def do_help(self, args):
+        """ Print the help.
+
+        """
+
+        if args:
+            try:
+                self._print(getattr(self, 'do_%s' % args).__doc__.splitlines())
+                return
+            except:
+                pass
+        super(SearchCmd, self).do_help(args)
+
+    def do_intro(self, args):
+        """ Re-print the intro screen.
+
+        """
+
+        self._print(self.intro.splitlines())
+
+    def complete_show_results(self, text, line, begidx, endidx):
+        """ Tab completion for the show_results command.
+
+        """
+
+        cmd_list = ['strongs', 'morph', 'notes', 'one_line']
+        return self._complete(text, line, begidx, endidx, cmd_list)
+
     def do_show_results(self, args):
         """ Output the results.
 
@@ -3790,7 +3907,8 @@ class SearchCmd(Cmd):
             +/-strongs      -   Enable/disable strongs in the output.
             +/-morph        -   Enable/disable morphology in the output
             +/-notes        -   Enable/disable foot notes in the output.
-            +/-one-line     -   Enable/disable one line output.
+            +/-added        -   Enable/disable added text in the output.
+            +/-one_line     -   Enable/disable one line output.
             anything else   -   If the output is from looking up verses with
                                 the lookup command, then any other words or
                                 quoted phrases given as arguments will be
@@ -3798,51 +3916,58 @@ class SearchCmd(Cmd):
 
         """
 
-        search_type = self._setting_dict['search-type']
-        strongs_search = self._setting_dict['search-strongs']
-        morph_search = self._setting_dict['search-morph']
+        search_type = self._setting_dict['search_type']
+        strongs_search = self._setting_dict['search_strongs']
+        morph_search = self._setting_dict['search_morph']
         search_range = self._setting_dict['range']
-        case_sensitive = self._setting_dict['case-sensitive']
+        case_sensitive = self._setting_dict['case_sensitive']
         search_added = self._setting_dict['added']
         highlight_list = self._highlight_list
         kwargs = self._setting_dict
         results = self._results
 
         # Get the output arguments.
-        show_strongs = self._setting_dict['show-strongs'] or strongs_search
-        show_morph = self._setting_dict['show-morph'] or morph_search
-        show_notes = self._setting_dict['show-notes']
-        one_line = self._setting_dict['one-line']
+        show_strongs = self._setting_dict['show_strongs'] or strongs_search
+        show_morph = self._setting_dict['show_morph'] or morph_search
+        show_notes = self._setting_dict['show_notes']
+        one_line = self._setting_dict['one_line']
 
-        if '+strongs' in args:
+        arg_list = self._get_list(args)
+
+        if '+strongs' in arg_list:
             show_strongs = True
-            args.replace('+strongs', '')
+            arg_list.remove('+strongs')
         if '+morph' in args:
             show_morph = True
-            args.replace('+morph', '')
+            arg_list.remove('+morph')
         if '-strongs' in args:
             show_strongs = False
-            args.replace('-strongs', '')
+            arg_list.remove('-strongs')
         if '-morph' in args:
             show_strongs = False
-            args.replace('-morph', '')
+            arg_list.remove('-morph')
         if '+notes' in args:
             show_notes = True
-            args.replace('+notes', '')
+            arg_list.remove('+notes')
         if '-notes' in args:
             show_notes = False
-            args.replace('-notes', '')
-        if '+one-args' in args:
+            arg_list.remove('-notes')
+        if '+one_line' in args:
             one_line = True
-            args.replace('+one-args', '')
-        if '-one-args' in args:
+            arg_list.remove('+one_line')
+        if '-one_line' in args:
             one_line = False
-            args.replace('-one-args', '')
+            arg_list.remove('-one_line')
+        if '+added' in args:
+            search_added = True
+            arg_list.remove('+added')
+        if '-added' in args:
+            search_added = False
+            arg_list.remove('-added')
 
         if search_range:
             results.intersection_update(parse_verse_range(search_range))
 
-        arg_list = self._get_list(args)
         if not highlight_list:
             # Highlight anything else the user typed in.
             highlight_list = arg_list
@@ -3854,6 +3979,7 @@ class SearchCmd(Cmd):
             if kwargs['context']:
                 regx_list.extend(build_highlight_regx(results, case_sensitive))
         else:
+            arg_str = ' '.join(arg_list)
             regx_list = [re.compile(arg_str, re.I if case_sensitive else 0)]
 
         # Flags for the highlight string.
@@ -3875,7 +4001,8 @@ class SearchCmd(Cmd):
             print('  '.join(verse_gen))
         else:
             # Print the verses on seperate lines.
-            print('\n'.join(verse_gen))
+            self._print(verse_gen)
+            #print('\n'.join(verse_gen))
 
     def complete_lookup(self, text, line, begidx, endidx):
         """ Try to complete Verse references.
@@ -3896,6 +4023,13 @@ class SearchCmd(Cmd):
 
         self._results = parse_verse_range(args)
         self._highlight_list = []
+
+    def complete_strongs(self, text, line, begidx, endidx):
+        """ Tabe complete Strong's numbers.
+
+        """
+        text = text.capitalize()
+        return self._complete(text, line, begidx, endidx, self._strongs)
 
     def do_strongs(self, numbers):
         """ Lookup one or more Strong's Numbers.
@@ -3919,6 +4053,13 @@ class SearchCmd(Cmd):
             else:
                 mod_name = 'StrongsRealHebrew'
             print('%s\n' % mod_lookup(mod_name, strongs_num[1:]))
+
+    def complete_morph(self, text, line, begidx, endidx):
+        """ Tabe complete Morphological Tags.
+
+        """
+        text = text.capitalize()
+        return self._complete(text, line, begidx, endidx, self._morph)
 
     def do_morph(self, tags):
         """ Lookup one or more Morphological Tags.
@@ -3985,19 +4126,19 @@ class SearchCmd(Cmd):
 
         Run without arguments to see the current settings.
 
-        set show-strongs = True/False   -   Enable strongs numbers in the
+        set show_strongs = True/False   -   Enable strongs numbers in the
                                             output.
-        set show-morph = True/False     -   Enable morphology in the output.
+        set show_morph = True/False     -   Enable morphology in the output.
         set context = <number>          -   Show <number> verses of context.
-        set case-sensitive = True/False -   Set the search to case sensitive.
+        set case_sensitive = True/False -   Set the search to case sensitive.
         set range = <range>             -   Confine search/output to <range>.
-        set one-line = True/False       -   Don't break output at verses.
+        set one_line = True/False       -   Don't break output at verses.
         set added = True/False          -   Show/search added text.
-        set show-notes = True/False     -   Show foot-notes in output.
-        set search-type = <type>        -   Use <type> for searching.
-        set search-strongs = True/False -   Search Strong's numbers
+        set show_notes = True/False     -   Show foot-notes in output.
+        set search_type = <type>        -   Use <type> for searching.
+        set search_strongs = True/False -   Search Strong's numbers
                                             (deprecated).
-        set search-morph = True/False   -   Search Morphological Tags
+        set search_morph = True/False   -   Search Morphological Tags
                                             (deprecated).
 
         """
@@ -4017,8 +4158,11 @@ class SearchCmd(Cmd):
             for setting in args.split(';'):
                 if '=' in setting:
                     k, v = setting.split('=')
-                else:
+                elif ' ' in setting:
                     k, v = setting.split()
+                else:
+                    print(self._setting_dict.get(setting, ''))
+                    continue
                 k = k.strip()
                 v = v.strip()
                 if isinstance(v, str):
@@ -4078,15 +4222,17 @@ class SearchCmd(Cmd):
                                     one of the words.  In the mixed search put
                                     a '^' in front of two or more words/phrases
                                     to make the results contain one and only
-                                    one more of the marked search terms.
+                                    one of the marked search terms.
             combined            -   Search using a phrase like ('in' AND ('the'
-                                    OR 'it')) and finding verses that have both
+                                    OR 'it')) finding verses that have both
                                     'in' and 'the' or both 'in' and 'it'.
-            partial_word        -   Search for partial words that contain
-                                    certain (e.g. a search for 'begin*' would
-                                    find all the words starting with 'begin'.)
-                                    Use in the mixed search to make partial
-                                    words in a phrase.
+                                    To do the same thing with the mixed search
+                                    use a phrase like this: 
+                                    (mixed '+in' '^the' '^it').
+            partial_word        -   Search for partial words (e.g. a search for
+                                    'begin*' would find all the words starting
+                                    with 'begin'.)  Use in the mixed search to
+                                    make partial words in a phrase.
             ordered_multiword   -   Search for words in order, but not
                                     necessarily in a phrase.  In the mixed
                                     search put a '~' in front of any quoted
@@ -4156,7 +4302,7 @@ class SearchCmd(Cmd):
         self._search_list = arg_list
 
         extras = self._setting_dict['extras']
-        search_type = self._setting_dict['search-type']
+        search_type = self._setting_dict['search_type']
 
         try:
             # Get the search function asked for.
@@ -4167,10 +4313,10 @@ class SearchCmd(Cmd):
             exit()
 
         # Search.
-        strongs_search = self._setting_dict['search-strongs']
-        morph_search = self._setting_dict['search-morph']
+        strongs_search = self._setting_dict['search_strongs']
+        morph_search = self._setting_dict['search_morph']
         search_range = self._setting_dict['range']
-        case_sensitive = self._setting_dict['case-sensitive']
+        case_sensitive = self._setting_dict['case_sensitive']
         search_added = self._setting_dict['added']
         self._results = search_func(arg_list, strongs_search, morph_search,
                                     search_added, case_sensitive, search_range,
@@ -4178,6 +4324,7 @@ class SearchCmd(Cmd):
         count = len(self._results)
         info_print("\nFound %s verse%s.\n" % (count, 's' if count != 1 else ''), 
                    tag=-10)
+        print("To view the verses type 'show_results.'")
 
         if search_type in ['combined', 'combined_phrase']:
             # Combined searches are complicated.
@@ -4315,8 +4462,20 @@ def main(arg_list, **kwargs):
         exit()
     else:
         if not arg_list:
+            import readline
+            histfile = os.path.join(INDEX_PATH, 'search_hist')
+            try:
+                readline.read_history_file(histfile)
+            except IOError:
+                pass
+            import atexit
+            atexit.register(readline.write_history_file, histfile)
+            del histfile
             cmd_line = SearchCmd()
-            cmd_line.cmdloop()
+            try:
+                cmd_line.cmdloop()
+            except:
+                pass
             print('\nGoodbye.\n')
             exit()
 
