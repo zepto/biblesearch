@@ -188,6 +188,50 @@ def screen_size():
         except:
             return (25, 80)
 
+def render_raw(verse_text, strongs=False, morph=False):
+    """ Render raw verse text.
+
+    """
+
+    strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
+    morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
+    test_regx = re.compile(r'([^<]*)<(?P<tag>w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
+    divname_regx = re.compile(r'(?:<seg>)?<(?:divineName)>+([^<]*?)([\'s]*)</(?:divineName)>(?:</seg>)?', re.I)
+    marker_regx = re.compile(r'.*marker="(.)".*', re.I)
+    v_text = ''
+    for match in test_regx.finditer(verse_text):
+        opt, tag_name, tag_attr, tag_text, punct = match.groups()
+        tag_text = divname_regx.sub(lambda m: m.group(1).upper() + m.group(2), tag_text)
+        if 'marker' in opt.lower():
+            v_text += '<p>%s</p> ' % marker_regx.sub('\\1', opt)
+        if 'added' in tag_attr.lower():
+            v_text += '<i>'
+        elif 'note' in tag_name.lower() or 'study' in tag_attr.lower():
+            v_text += ' <n>%s</n>' % tag_text
+        if match.re.search(tag_text):
+            for i in match.re.finditer(tag_text):
+                info_print('%s' % i.groups(), tag=4)
+                o, t_n, t_a, t_t, p = i.groups()
+                if t_n.strip().lower() in ['transchange', 'w']:
+                    v_text += o + t_t
+                    if strong_regx.search(t_a) and strongs:
+                        v_text += ' <%s>' % '> <'.join(strong_regx.findall(t_a))
+                    if morph_regx.search(t_a) and morph:
+                        v_text += ' {%s}' % '} {'.join(morph_regx.findall(t_a))
+                v_text += p
+        else:
+            if tag_name.strip().lower() in ['transchange', 'w']:
+                v_text += tag_text
+                if strong_regx.search(tag_attr) and strongs:
+                    v_text += ' <%s>' % '> <'.join(strong_regx.findall(tag_attr))
+                if morph_regx.search(tag_attr) and morph:
+                    v_text += ' {%s}' % '} {'.join(morph_regx.findall(tag_attr))
+        if 'added' in tag_attr.lower():
+            v_text += '</i>'
+        v_text += punct
+        info_print('%s: %s: %s: %s: %s' % (opt, tag_name, tag_attr, tag_text, punct), tag=4)
+    return v_text
+
 def render_verses_with_italics(ref_list, wrap=True, strongs=False, 
                                morph=False, added=True, notes=False,
                                highlight_func=None, *args):
@@ -249,12 +293,13 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         return word_regx.sub(italic_highlight, match_text)
 
     # Get an iterator over all the requested verses.
-    #verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
-                               #markup=Sword.FMT_PLAIN, render='render_raw')
     verse_iter = IndexedVerseTextIter(iter(ref_list), strongs, morph,
                                       italic_markers=(COLOR_LEVEL >= 1),
                                       added=added, paragraph=added,
                                       notes=notes)
+    if VERBOSE_LEVEL == 20:
+        verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
+                                   markup=Sword.FMT_PLAIN, render='render_raw')
     if VERBOSE_LEVEL >= 30:
         verse_iter = RawDict(iter(ref_list))
     for verse_ref, verse_text in verse_iter:
@@ -311,7 +356,9 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
 
         match_text = match.group()
         for word in match.groups():
-            match_text = re.sub('((?:\033\[[\d+;]*m|\\b)+%s(?:\033\[[\d+;]*m|\\b)+)' % re.escape(word), highlight_text, match_text)
+            if word:
+                info_print(word, tag=20)
+                match_text = re.sub('((?:\033\[[\d+;]*m|\\b)+%s(?:\033\[[\d+;]*m|\\b)+)' % re.escape(word), highlight_text, match_text)
             #match_text = match_text.replace(word, '\033[7m%s\033[m' % word) 
         #print(match_text)
         return match_text
@@ -327,8 +374,7 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
 
     return verse_text
 
-def build_highlight_regx(search_list, case_sensitive, sloppy=False, 
-                         partial=False):
+def build_highlight_regx(search_list, case_sensitive, sloppy=False):
     """ Build a regular expression and highlight string to colorize the
     items in search_list as they appear in a verse.
 
@@ -338,12 +384,25 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False,
         return []
 
     regx_list = []
+    # Extra word boundry to catch ansi color escape sequences.
+    word_bound='(?:\033\[[\d;]*m|\\\\b)+'
+    # Extra space filler to pass over ansi color escape sequences.
+    extra_space='|\033\[[\d;]*m|\033'
     for item in search_list:
-        bound = '' if not partial and '&' not in item else '|\\\\w'
+        is_regex=('*' in item or item.startswith('&'))
+        if '*' in item and not item.startswith('&'):
+            # Build a little regular expression to highlight partial words.
+            item = item[1:] if item[0] in '!^+|' else item
+            item = item.replace('*', '\w*')
+            item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
+        elif item.startswith('&'):
+            # Just use a regular expression. ('&' mark the term as a regular
+            # expression.)
+            item = item[1:]
+
         regx_list.append(Search.search_terms_to_regex(item, case_sensitive,
-                word_bound='(?:\033\[[\d;]*m|\\\\b%s)+' % bound,
-                extra_space='|\033\[[\d;]*m|\033', 
-                sloppy=(sloppy or '~' in item)))
+                word_bound=word_bound, extra_space=extra_space,
+                sloppy=(sloppy or '~' in item), is_regex=is_regex))
 
     return regx_list
 
@@ -530,6 +589,9 @@ class VerseTextIter(object):
         elif render.lower() == 'render_raw':
             self._fix_space_regx = re.compile(r'([^\.:\?!])\s+')
             self._fix_end_regx = re.compile(r'\s+([\.:\?!,;])')
+            self._fix_start_tag_regx = re.compile(r'(<[npi]>)\s*')
+            self._fix_end_tag_regx = re.compile(r'\s*(</[npi]>)')
+            self._upper_divname_regx = re.compile(r'(\w+)([\'s]*)')
             self._render_func = lambda: self._parse_raw(self._module.getRawEntry(), strongs, morph)
         else:
             self._render_func = self._module.RenderText
@@ -640,7 +702,7 @@ class VerseTextIter(object):
         for node in xml_dom.childNodes:
             child_s = self._parse_xml(node, strongs, morph)
             if 'divine' in name.lower():
-                verse_text += ' %s' % child_s.upper()
+                verse_text += ' %s' % self._upper_divname_regx.sub(lambda m: m.group(1).upper() + m.group(2), child_s)
             else:
                 verse_text += ' %s' % child_s
 
@@ -668,7 +730,10 @@ class VerseTextIter(object):
         parsed_str = self._parse_xml(parsed_xml, strongs, morph)
         # Make all the spacing correct.
         fixed_str = self._fix_end_regx.sub('\\1', parsed_str)
-        return self._fix_space_regx.sub('\\1 ', fixed_str)
+        fixed_str = self._fix_space_regx.sub('\\1 ', fixed_str)
+        fixed_str = self._fix_start_tag_regx.sub('\\1', fixed_str)
+        fixed_str = self._fix_end_tag_regx.sub('\\1', fixed_str)
+        return fixed_str.replace('\n', '')
 
 
 class RawDict(object):
@@ -1657,7 +1722,7 @@ class Search(object):
     # Escape the morphological tags.
     _escape_morph = classmethod(lambda c, m: '\{%s\}' % re.escape(m.groups()[0]).upper())
 
-    def __init__(self, module='KJV', path=''):
+    def __init__(self, module='KJV', path='', multiword=False):
         """ Initialize the search.
 
         """
@@ -1666,11 +1731,12 @@ class Search(object):
         self._index_dict = IndexDict(module, path)
 
         self._module_name = module
+        self._multi = multiword
 
     @classmethod
     def search_terms_to_regex(cls, search_terms, case_sensitive, 
                               word_bound='\\\\b', extra_space='', 
-                              sloppy=False):
+                              sloppy=False, is_regex=False):
         """ Build a regular expression from the search_terms to match a verse
         in the Bible.
 
@@ -1678,6 +1744,12 @@ class Search(object):
 
         # Set the flags for the regular expression.
         flags = re.I if not case_sensitive else 0
+
+        if is_regex:
+            reg_str = search_terms
+            info_print('\nUsing regular expression: %s\n' % reg_str, tag=2)
+
+            return re.compile(reg_str, flags)
 
         # This will skip words.
         not_words_str = r'\b\w+\b'
@@ -1799,7 +1871,7 @@ class Search(object):
             # range.
             range_set = parse_verse_range(range_str)
 
-            if func.__name__ != 'regex_search':
+            if func.__name__ not in ['regex_search', 'partial_word_search']:
                 # Try to catch and fix any Strong's Numbers or Morphological
                 # Tags.
                 search_terms = self._fix_strongs_morph(search_terms)
@@ -2036,8 +2108,10 @@ class Search(object):
                            added=True, case_sensitive=False, range_str=''):
         """ partial_word_search(self, search_terms, strongs=False, morph=False,
                 case_sensitive=False, range_str='') -> 
-        Perform a search returning any verse with one or more words containing
-        the search terms.
+        Perform a search returning any verse with one or more words matching
+        the partial words given in the search terms.  Partial words are markes
+        tih *'s (e.g. '*guil*' will match any word with 'guil' in it such as
+        'guilt' or 'beguile.'
 
             search_terms    -   Terms to search for.
             strongs         -   Search for Strong's Number phrases.
@@ -2052,11 +2126,17 @@ class Search(object):
 
         found_set = set()
 
+        # Split the search terms and search through each word key in the index
+        # for any word that contains the partial word.
         term_list = search_terms.split()
-        for i in self._index_dict.keys():
+        for word in self._index_dict['_words_']:
             for term in term_list:
-                if term in i:
-                    found_set.update(self._index_dict[i])
+                # A Regular expression that matches any number of word
+                # characters for every '*' in the term.
+                reg_str = '\\b%s\\b' % term.replace('*', '\w*')
+                term_regx = re.compile(reg_str, re.I)
+                if term_regx.match(word):
+                    found_set.update(self._index_dict[word])
 
         return found_set
 
@@ -2294,10 +2374,19 @@ class Search(object):
                     combine_func = combine_dict[term[0]]
                 term = term[1:]
             else:
-                # Any of these verses could be in the output
-                combine_func = found_set.update
+                if self._multi and found_set:
+                    # If multiword is default and found_set is not empty
+                    # make all search terms appear in the output.
+                    combine_func = found_set.intersection_update
+                else:
+                    # Any of these verses could be in the output
+                    combine_func = found_set.update
 
-            if ' ' in term:
+            if term.startswith('&'):
+                # Allow regular expression searching.
+                term = term[1:]
+                search_func = self.regex_search
+            elif ' ' in term:
                 # Search term is a quoted string, so treat it like a phrase.
                 if term.startswith('~'):
                     # ~'s trigger ordered multiword or sloppy phrase search.
@@ -2305,16 +2394,11 @@ class Search(object):
                     search_func = self.ordered_multiword_search
                 else:
                     search_func = self.mixed_phrase_search
-            elif term.startswith('*'):
-                # Allow regular expression searching.
-                term = term[1:]
-                search_func = self.regex_search
-            elif term.startswith('&'):
+            elif '*' in term:
                 # Search for partial words.
-                term = term[1:]
                 search_func = self.partial_word_search
             else:
-                # A single word should be multi-word.
+                # A single word should be (multi/any)-word.
                 search_func = self.multiword_search
 
             # Perform a strongs search.
@@ -2585,8 +2669,10 @@ class Search(object):
         morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
         test_regx = re.compile(r'<([^>]*)>([^<]*)')
         #test_regx = re.compile(r'<([^>]*)([^<]*)<([^/]*)/[^>]*>')
-        #test_regx = re.compile(r'<(?:w|transChange)([\w\W]*?)>([^<]*)</(?:w|transChange)>([^<]*)', re.I)
-        divname_regx = re.compile(r'<.*?>([^<]*)</.*>', re.I)
+        #test_regx = re.compile(r'<(?P<tag>w|transChange)([^>]*)([\w\W]*?)>([^<]*)</(?P=tag)>([^<]*)', re.I)
+        test_regx = re.compile(r'([^<]*)<(?P<tag>w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
+        divname_regx = re.compile(r'(?:<seg>)?<(?:divineName)>+([^<]*?)([\'s]*)</(?:divineName)>(?:</seg>)?', re.I)
+        marker_regx = re.compile(r'.*marker="(.)".*', re.I)
         term_dict = defaultdict(list)
         len_attrs = 0
         for verse_ref, verse_text in verse_iter:
@@ -2595,7 +2681,29 @@ class Search(object):
                 word_dict = defaultdict(list)
                 print(verse_text)
                 cur_tag = ''
+                print()
                 for match in test_regx.finditer(verse_text):
+                    opt, tag_name, tag_attr, tag_text, punct = match.groups()
+                    tag_text = divname_regx.sub(lambda m: m.group(1).upper() + m.group(2), tag_text)
+                    if match.re.search(tag_text):
+                        for i in match.re.finditer(tag_text):
+                            print(i.groups())
+                            o, t_n, t_a, t_t, p = i.groups()
+                            if t_n.strip().lower() in ['transchange', 'w']:
+                                v_text += o + t_t
+                            v_text += p
+                    else:
+                        if tag_name.strip().lower() in ['transchange', 'w']:
+                            v_text += tag_text
+                    v_text += punct
+                    print(opt, tag_name, tag_attr, tag_text, punct)
+                    continue
+                    print(match.groups())
+                    if match.re.search(match.group(3)):
+                        t = match.re
+                        for m in t.finditer(match.group(3)):
+                            print(m.groups())
+                    continue
                     attr, words = match.groups()
                     if '/' not in attr and not cur_tag:
                         cur_tag = attr.split()[0]
@@ -2810,8 +2918,7 @@ def main(arg_list, **kwargs):
         # Don't modify regular expression searches.
         if search_type != 'regex':
             regx_list = build_highlight_regx(highlight_list, case_sensitive,
-                        (search_type == 'ordered_multiword'),
-                        (search_type == 'partial_word'))
+                        (search_type == 'ordered_multiword'))
             if kwargs['context']:
                 regx_list.extend(build_highlight_regx(results, case_sensitive))
         else:
@@ -2847,7 +2954,7 @@ if __name__ == '__main__':
     parser.add_option('-i', '--index', action='store_true', default=False,
                         help='(Re-)build the search index.',
                         dest='build_index')
-    parser.add_option('-s', '--search-type', action='store', default='phrase',
+    parser.add_option('-s', '--search-type', action='store', default='mixed',
             help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, mixed_phrase, ordered_multiword, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: phrase)',
             dest='search_type')
     parser.add_option('-S', '--strongs', action='store_true', default=False,
