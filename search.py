@@ -298,7 +298,7 @@ class BibleBase(object):
         if not verse_ref_set:
             return []
 
-        verse_iter = VerseIter(verse_ref_set)
+        verse_iter = VerseIter(verse_list_iter(verse_ref_set))
         verse_iter.morph = self.morph
         verse_iter.strongs = self.strongs
 
@@ -338,6 +338,15 @@ class BibleBase(object):
 
         return verse_text
 
+def verse_list_iter(verse_ref_set):
+    """ Returns an iterator over a sorted version of verse_ref_set.
+
+    """
+
+    # Speed up the iteration by first sorting the range.
+    sort_key = lambda r: Sword.VerseKey(r).Index()
+    return iter(sorted(verse_ref_set, key=sort_key))
+
 class VerseRefIter(object):
     """ Iterator of verse references.
 
@@ -347,21 +356,6 @@ class VerseRefIter(object):
         """ Initialize.
 
         """
-
-        if isinstance(start, set):
-            # A set of verse references was given so use it instead of
-            # incrementing from start to end.
-
-            # Speed up the iteration by first sorting the range.
-            sort_key = lambda r: Sword.VerseKey(r).Index()
-            self._ref_list = sorted(start, key=sort_key)
-
-            # Get the first and last reference in the range.
-            end = self._ref_list[-1]
-            start = self._ref_list.pop(0)
-        else:
-            # Just an incremental range.
-            self._ref_list = None
 
         self._start = Sword.VerseKey(start)
         self._end = Sword.VerseKey(end)
@@ -382,12 +376,7 @@ class VerseRefIter(object):
         self._verse_ref = self._verse.getText()
 
         # Load the next verse in the range.
-        if not self._ref_list:
-            # Just increment it.
-            self._verse.increment()
-        else:
-            # Load it from a pre-specified list.
-            self._verse = Sword.VerseKey(self._ref_list.pop(0))
+        self._verse.increment()
 
         # Return only the reference.
         return self._verse_ref
@@ -406,18 +395,16 @@ class VerseRefIter(object):
 
         return self.__next__()
 
-class VerseIter(VerseRefIter):
+class VerseIter(object):
     """ An iterable object for accessing verses in the Bible.  Maybe it will
     be easier maybe not.
 
     """
 
-    def __init__(self, start, end='Revelation of John 22:21', module='KJV'):
+    def __init__(self, reference_iter, module='KJV'):
         """ Initialize.
 
         """
-
-        super(VerseIter, self).__init__(start, end)
 
         markup = Sword.MarkupFilterMgr(Sword.FMT_PLAIN)
         
@@ -430,37 +417,7 @@ class VerseIter(VerseRefIter):
 
         self._module = self._library.getModule(module)
 
-        self._module.setKey(self._verse)
-
-    def _no_strongs_morph(func):
-        """ Temporary turn off the rendering of Morphological tags, and
-        Strong's numbers while running func.
-
-        """
-
-        def wrapper(self, *args, **kwargs):
-            oldstrongs = self.strongs
-            oldmorph = self.morph
-
-            self.strongs = False
-            self.morph = False
-
-            ret_val = func(self, *args, **kwargs)
-
-            self.strongs = oldstrongs
-            self.morph = oldmorph
-
-            return ret_val
-        return wrapper
-
-    @_no_strongs_morph
-    def clean_render(self):
-        """ Returns the current verse reference and text, only
-        without the Strong's Numbers or Morphological Tags.
-
-        """
-
-        return self._module.RenderText()
+        self._ref_iter = reference_iter
 
     def next(self):
         """ Returns the next verse reference and text.
@@ -474,10 +431,9 @@ class VerseIter(VerseRefIter):
 
         """
 
-        self._module.setKey(self._verse)
+        self._verse_ref = next(self._ref_iter)
+        self._module.setKey(Sword.VerseKey(self._verse_ref))
         verse_text = self._module.RenderText()
-
-        super(VerseIter, self).__next__()
 
         return (self._verse_ref, verse_text)
 
@@ -532,12 +488,12 @@ class VerseIter(VerseRefIter):
     @_set_options
     def morph(self, value): pass
 
-class BookIter(VerseIter):
+class BookIter(VerseRefIter):
     """ Iterates over just one book.
 
     """
 
-    def __init__(self, book='Genesis', module='KJV'):
+    def __init__(self, book='Genesis'):
         """ Setup iterator.
 
         """
@@ -547,7 +503,7 @@ class BookIter(VerseIter):
         end.setChapter(end.getChapterMax())
         end.setVerse(end.getVerseMax())
 
-        super(BookIter, self).__init__(start, end, module)
+        super(BookIter, self).__init__(start, end)
 
 class IndexBible(object):
     """ Index the bible by Strong's Numbers, Morphological Tags, and words.
@@ -648,9 +604,10 @@ class IndexBible(object):
         """
 
         book_iter = BookIter(book_name)
-        book_iter.strongs = book_iter.morph = True
+        verse_iter = VerseIter(book_iter, self._module_name)
+        verse_iter.strongs = verse_iter.morph = True
 
-        for verse_ref, verse_text in book_iter:
+        for verse_ref, verse_text in verse_iter:
             print('\033[%dD\033[KIndexing...%s' % \
                     (len(verse_ref) + 20, verse_ref), end='')
             stdout.flush()
@@ -777,6 +734,9 @@ class BibleSearch(BibleBase):
         if search_list[0] not in verse_list:
             return False
 
+        if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
+            return True
+
         search_len = len(search_list)
         cur_index = -1
         while search_list[0] in verse_list[cur_index + 1:]:
@@ -794,12 +754,46 @@ class BibleSearch(BibleBase):
             ref_list = self._range_set.intersection(ref_list)
 
         found_set = set()
-        verse_iter = VerseIter(set(ref_list))
+        verse_iter = VerseIter(verse_list_iter(set(ref_list)))
         verse_iter.strongs = strongs
         verse_iter.morph = morph
         search_list = search_str.split()
         search_len = len(search_list)
         for verse_ref, verse_text in verse_iter:
+            if strongs:
+                verse_list = self._strongs_regx.findall(verse_text)
+            elif morph:
+                verse_list = self._morph_regx.findall(verse_text)
+            else:
+                if not self.case_sensitive:
+                    verse_text = verse_text.lower()
+                verse_list = self.clean_text(verse_text).split()
+
+            if search_list[0] not in verse_list:
+                continue
+
+            if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
+                found_set.add(verse_ref)
+            #cur_index = -1
+            #while search_list[0] in verse_list[cur_index + 1:]:
+                #cur_index = verse_list.index(search_list[0], cur_index + 1)
+                #if search_list == verse_list[cur_index: cur_index + search_len]:
+                    #found_set.add(verse_ref)
+        return found_set
+
+    def _phrase_search3(self, search_str, ref_list, strongs=False, morph=False):
+        """ Searches for the phrase search phrase in the verse.
+
+        """
+
+        if self._range_set:
+            ref_list = self._range_set.intersection(ref_list)
+
+        found_set = set()
+        search_list = search_str.split()
+        search_len = len(search_list)
+        for verse_ref in sorted(ref_list, key=self.index):
+            verse_text = self.verse_text(verse_ref)
             if strongs:
                 verse_list = self._strongs_regx.findall(verse_text)
             elif morph:
@@ -917,9 +911,11 @@ class BibleSearch(BibleBase):
             print('Searching for phrase "%s"...' % search_str, end='')
             stdout.flush()
             verse_list = self._set_intersect(sorted_search_list, index_dict)
+            #verse_list = index_dict.get(least_common_index, [])
             found_verses = self._phrase_search2(search_str, verse_list,
                                                 strongs=strongs, morph=morph)
-            #verse_list = self._set_intersect(sorted_search_list, index_dict)
+            #found_verses = self._phrase_search3(search_str, verse_list,
+                                                #strongs=strongs, morph=morph)
             #for verse_ref in sorted(verse_list, key=self.index):
             #for verse_ref in index_dict.get(least_common_index, []):
                 #if self._phrase_search(verse_ref, search_str, strongs=strongs, 
@@ -943,7 +939,7 @@ class BibleSearch(BibleBase):
         search_regx = re.compile(search_str)
 
         if self._range_set:
-            verse_iter = VerseIter(self._range_set)
+            verse_iter = VerseIter(verse_list_iter(self._range_set))
         else:
             verse_iter = VerseIter('Genesis 1:1')
         verse_iter.strongs = strongs
