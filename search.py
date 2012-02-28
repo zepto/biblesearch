@@ -446,6 +446,50 @@ class BibleSearch(object):
         found_verses = list(set(found_verses))
         return found_verses
 
+    def _generic_search(self, search_str, index_dict, phrase, search_any, 
+                        strongs=False, morph=False):
+        """ A generic search function used for words, phrases, strongs, and
+        morphology.
+
+        """
+
+        sorted_search_list = sorted(set(search_str.split()), 
+                key=lambda i: len(index_dict[i]))
+        common_num = len(index_dict.keys()) // 2
+
+        if not phrase:
+            if not search_any:
+                search_list = sorted_search_list
+                print('Searching for "%s"...' % \
+                        ' AND '.join(search_str.split()), end='')
+                found_verses = self._set_intersect(sorted_search_list, 
+                                                   index_dict)
+            else:
+                print('Searching for "%s"...' % \
+                        ' OR '.join(search_str.split()), end='')
+                found_verses = self._set_union(sorted_search_list, index_dict)
+
+            print("Done.\nFound %s verses." % len(found_verses))
+
+            return list(found_verses)
+        else:
+            search_regx = re.compile(r'\b%s\b' % search_str, re.I)
+            found_verses = set()
+            stdout.flush()
+            #verse_set = self._set_intersect(sorted_search_list, index_dict)
+            least_common_index = sorted_search_list[0]
+            print('Searching for "%s"...' % search_str, end='')
+            stdout.flush()
+            for verse_ref in index_dict.get(least_common_index, []):
+            #for verse_ref in verse_set:
+                if self._phrase_search(verse_ref, search_regx, strongs=strongs, 
+                                       morph=morph):
+                    found_verses.add(verse_ref)
+
+            print("Done.\nFound %s verses." % len(found_verses))
+
+            return list(found_verses)
+
     def _word_search(self, search_list, phrase=False, search_any=False):
         """ _word_search(search_list, phrase=False, search_any=False) -> For the
         list of search terms.
@@ -462,11 +506,13 @@ class BibleSearch(object):
         with open('word.dump', 'r') as word_file:
             word_dict = json.loads(word_file.read())
 
-        print("Loading word count dictionary...")
-        with open('word_count.dump', 'r') as word_count_file:
-            word_count_dict = json.loads(word_count_file.read())
+        #print("Loading word count dictionary...")
+        #with open('word_count.dump', 'r') as word_count_file:
+            #word_count_dict = json.loads(word_count_file.read())
 
-        found_verses = set()
+        return self._generic_search(search_str.lower(), word_dict, phrase,
+                                    search_any)
+
         common_num = word_count_dict['verse_count'] / 2
 
         sorted_word_list = sorted(set(search_str.lower().split()), 
@@ -488,6 +534,7 @@ class BibleSearch(object):
 
             return list(found_verses)
         else:
+            found_verses = set()
             stdout.flush()
             #verse_set = self._set_intersect(sorted_word_list, word_dict)
             least_common_word = sorted_word_list[0]
@@ -502,35 +549,8 @@ class BibleSearch(object):
 
             return list(found_verses)
 
-        for word in sorted_word_list:
-            print("%-15s: %s" % (word, word_count_dict.get(word.lower(), 0)))
-            if search_any:
-                if word_count_dict.get(word.lower(), 0) < common_num:
-                    found_verses.extend(word_dict.get(word, []))
-                continue
-            print("Searching for %s..." % word, end='')
-            for verse_ref in word_dict.get(word, []):
-                if verse_ref in found_verses:
-                    continue
-
-                if phrase:
-                    found = self._phrase_search(verse_ref, search_regx)
-                else:
-                    found = self._all_search(verse_ref, search_str)
-
-                if found:
-                    found_verses.add(verse_ref)
-
-            break
-
-        if not found_verses:
-            print("Not found.")
-
-        print("Done.\nFound %s verses." % len(found_verses))
-        return list(found_verses)
-
     def _strongs_morph_search(self, search_list, phrase=False, search_any=False,
-                              strongs=True):
+                              strongs=True, morph=False):
         """ _strongs_morph_search(search_list, phrase=False, search_any=False,
         strongs=True) -> For the list of
         search terms.
@@ -558,6 +578,8 @@ class BibleSearch(object):
         with open(filename, 'r') as index_file:
             index_dict = json.loads(index_file.read())
 
+        return self._generic_search(search_str.upper(), index_dict, phrase,
+                                    search_any, strongs, morph)
 
         sorted_search_list = sorted(set(search_str.upper().split()), 
                 key=lambda i: len(index_dict[i]))
@@ -592,41 +614,6 @@ class BibleSearch(object):
             print("Done.\nFound %s verses." % len(found_verses))
 
             return list(found_verses)
-
-        found_verses = []
-        for word_num in search_str.split():
-            if search_any:
-                found_verses.extend(index_dict.get(word_num, []))
-                continue
-            for verse_ref in index_dict.get(word_num, []):
-                if verse_ref in found_verses:
-                    continue
-
-                if search_any:
-                    found_verses.append(verse_ref)
-                    continue
-
-                if phrase:
-                    found = self._phrase_search(verse_ref, search_regx,
-                                               strongs=strongs, 
-                                               morph=not strongs)
-                else:
-                    found = self._all_search(verse_ref, search_str, 
-                                             strongs=strongs, 
-                                             morph=not strongs)
-
-                if found:
-                    found_verses.append(verse_ref)
-
-            if not found_verses and not search_any:
-                print("Not found.")
-            break
-
-        self._library.setGlobalOption("Strong's Numbers", 'Off')
-        self._library.setGlobalOption("Morphological Tags", 'Off')
-
-        found_verses = list(set(found_verses))
-        return found_verses
 
 
 if __name__ == '__main__':
