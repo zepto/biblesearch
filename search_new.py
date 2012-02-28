@@ -50,10 +50,8 @@ from contextlib import closing
 from itertools import product
 from xml.dom.minidom import parseString
 import dbm
-#import shelve
 import os
 import json
-import gzip
 import re
 import locale
 
@@ -563,7 +561,8 @@ class VerseTextIter(object):
         """
 
         verse_text = self._render_func()
-        verse_text = '%s %s' % (self._get_heading(), verse_text)
+        if self._render_func == self._module.RenderText:
+            verse_text = '%s %s' % (self._get_heading(), verse_text)
 
         return verse_text
 
@@ -636,7 +635,8 @@ class VerseTextIter(object):
                 verse_text += ' %s' % child_s
 
         if xml_dom.attributes:
-            return italic_str % note_str % '%s%s%s' % (verse_text, strongs_str, morph_str)
+            return italic_str % note_str % '%s%s%s' % (verse_text, strongs_str,
+                                                       morph_str)
         if hasattr(xml_dom, 'data'):
             info_print(xml_dom.data, tag=4)
             return xml_dom.data
@@ -659,6 +659,128 @@ class VerseTextIter(object):
         # Make all the spacing correct.
         fixed_str = self._fix_end_regx.sub('\\1', parsed_str)
         return self._fix_space_regx.sub('\\1 ', fixed_str)
+
+
+class RawDict(object):
+    """ Parse raw verse text into a dictionary so it can easly be found out how
+    words are translated and how Strong's numbers are used.
+
+    """
+
+    def __init__(self, reference_iter,  module='KJV'):
+        """ Initialize the sword module.
+
+        """
+
+        # This doesn't matter.
+        markup = Sword.MarkupFilterMgr(Sword.FMT_PLAIN)
+        
+        # We don't own this or it will segfault.
+        markup.thisown = False
+        self._library = Sword.SWMgr(markup)
+        
+        self._module = self._library.getModule(module)
+        self._key = self._module.getKey()
+
+        self._ref_iter = reference_iter
+
+    def next(self):
+        """ Returns the next verse reference and text.
+
+        """
+
+        return self.__next__()
+
+    def __next__(self):
+        """ Returns a tuple of the next verse reference and text.
+
+        """
+
+        # Retrieve the next reference.
+        verse_ref = next(self._ref_iter)
+        self._key.setText(verse_ref)
+
+        # Set the verse and render the text.
+        verse_dict = self.get_dict(verse_ref)
+
+        return (verse_ref, verse_dict)
+
+    def __iter__(self):
+        """ Returns an iterator of self.
+
+        """
+
+        return self
+
+    def get_dict(self, verse_reference):
+        """ Lookup the verse reference in the sword module specified and
+        return a dictionary from it.
+
+        """
+
+        self._key.setText(verse_reference)
+        raw_text = self._module.getRawEntry()
+        return self._get_parsed_dict(raw_text, True, True)
+
+    def _raw_to_dict(self, xml_dom, strongs=False, morph=False):
+        """ Recursively parse all the childNodes in a xml minidom, and build
+        a dictionary to use for telling what strongs numbers go to what words
+        and vise versa.
+
+        """
+
+        # The string that will hold the verse.
+        verse_dict = defaultdict(list)
+        # Recursively build the text from all the child nodes.
+        child_s = ''
+        text = ''
+        for node in xml_dom.childNodes:
+            child_s = self._raw_to_dict(node, strongs, morph)
+            if not isinstance(child_s, str):
+                for k, v in child_s.items():
+                    verse_dict[k].extend(v)
+            else:
+                text += child_s
+        if xml_dom.attributes:
+            attr_dict = dict(xml_dom.attributes.items())
+            if strongs:
+                if 'lemma' in attr_dict:
+                    for num in attr_dict['lemma'].split():
+                        verse_dict[num.split(':')[1]].append(text)
+            if morph:
+                if 'morph' in attr_dict:
+                    for tag in attr_dict['morph'].split():
+                        verse_dict[tag.split(':')[1]].append(text)
+            if 'morph' in attr_dict or 'lemma' in attr_dict:
+                attrib_dict = defaultdict(list)
+                if 'morph' in attr_dict:
+                    for tag in attr_dict['morph'].split():
+                        attrib_dict['morph'].append(tag.split(':')[1])
+                if 'lemma' in attr_dict:
+                    for num in attr_dict['lemma'].split():
+                        attrib_dict['strongs'].append(num.split(':')[1])
+                verse_dict[text.lower()].append(attrib_dict)
+        if hasattr(xml_dom, 'data'):
+            info_print(xml_dom.data, tag=4)
+            return xml_dom.data
+        
+        return verse_dict
+
+    def _get_parsed_dict(self, raw_text, strongs=False, morph=False):
+        """ Parse raw verse text and return a formated version.
+
+        """
+
+        # A hack to make the raw text parse as xml.
+        xml_text = '''<?xml version="1.0"?>
+        <root xmlns="%s">
+        %s
+        </root>''' % ('verse', raw_text)
+
+        # It works now we can parse the xml dom.
+        parsed_xml = parseString(xml_text)
+        parsed_dict = self._raw_to_dict(parsed_xml, strongs, morph)
+        return parsed_dict
 
 
 class IndexedVerseTextIter(object):
@@ -2161,6 +2283,64 @@ class Search(object):
         found_set.discard('')
 
         return found_set
+
+    @_process_search
+    def test_search(self, search_terms, strongs=False, morph=False,
+                    added=True, case_sensitive=False, range_str=''):
+        """ A Test.
+
+        """
+
+        ref_set = self._index_dict.value_union(search_terms.split(), 
+                                                 case_sensitive)
+        if range_str:
+            # Only search through the supplied range.
+            ref_set.intersection_update(range_str)
+
+        ref_list = sorted(ref_set, key=sort_key)
+
+        term_dict = defaultdict(list)
+        raw_dict = RawDict(iter(ref_list), self._module_name)
+        for verse_ref, verse_dict in raw_dict:
+            for term in search_terms.split():
+                if self._strongs_regx.match(term):
+                    num = term.replace('<', '').replace('>', '')
+                    words = set(verse_dict[num.upper()])
+                    if words:
+                        term_dict[num.upper()].append({verse_ref:words})
+                elif self._morph_regx.match(term):
+                    tag = term.replace('{', '').replace('}', '')
+                    tag = term.replace('(', '').replace(')', '')
+                    words = set(verse_dict[tag.upper()])
+                    if words:
+                        term_dict[tag.upper()].append({verse_ref:words})
+                else:
+                    for key, value in verse_dict.items():
+                        if term.lower() in key:
+                            attr_dict = value[0]
+                            if strongs and 'strongs' in attr_dict:
+                                term_dict[term].append({verse_ref:attr_dict['strongs']})
+                            if morph and 'morph' in attr_dict:
+                                term_dict[term].append({verse_ref:attr_dict['morph']})
+                            #for dic in value:
+                                #if strongs and 'lemma' in dic:
+                                    #num_dict = defaultdict(list)
+                                    #for num in dic['lemma'].split():
+                                        #num_dict[verse_ref].append(num.split(':')[1])
+                                    #term_dict[term].append(num_dict)
+                                #if morph and 'morph' in dic:
+                                    #tag_dict = defaultdict(list)
+                                    #for tag in dic['morph'].split():
+                                        #tag_dict[verse_ref].append(tag.split(':')[1])
+                                    #term_dict[term].append(tag_dict)
+        len_longest_ref = len(max(ref_set, key=len))
+        for key, value in term_dict.items():
+            print('%s: ' % key)
+            for dic in value:
+                for ref, words in dic.items():
+                    print('\t{0:{1}}: "{2}"'.format(ref, len_longest_ref, '", "'.join(words)))
+        exit()
+
 
 def main(arg_list, **kwargs):
     """ Takes a string of arguments, and a bunch of keyword arguments.
