@@ -177,98 +177,6 @@ def screen_size():
         except:
             return (25, 80)
 
-def parse_xml(xml_dom, strongs=False, morph=False):
-    """ Recursively parse all the childNodes in a xml minidom.
-
-    """
-
-    s = ''
-    name = xml_dom.localName if xml_dom.localName else ''
-    strongs_str = morph_str = ''
-    if xml_dom.attributes:
-        attr_dict = dict(xml_dom.attributes.items())
-        s = attr_dict.get('marker', '')
-        s_type = attr_dict.get('type', '')
-        italic = '%s'
-        for key, value in attr_dict.items():
-            if 'added' in value.lower():
-                italic = '<i>%s</i>'
-            if 'study' in value.lower() or 'note' in name.lower():
-                return s
-            if 'lemma' in key.lower() and strongs:
-                for num in value.split():
-                    strongs_str += ' <%s> ' % num.split(':')[1]
-            if 'morph' in key.lower() and morph:
-                for tag in value.split():
-                    morph_str += ' {%s} ' % tag.split(':')[1]
-    for i in xml_dom.childNodes:
-        child_s = parse_xml(i, strongs, morph)
-        if 'divine' in name.lower():
-            s += child_s.upper()
-        else:
-            s += child_s
-    if xml_dom.attributes:
-        return italic % s + strongs_str + morph_str
-    if hasattr(xml_dom, 'data'):
-        return xml_dom.data
-    return s.strip()
-
-
-    node_list = []
-    if xml_dom.attributes:
-        print(xml_dom.attributes.items())
-        attr_items = xml_dom.attributes.items()
-        node_dict = {tuple(attr_items):[]}
-        for i in xml_dom.childNodes:
-            node_dict[tuple(attr_items)].append(parse_xml(i))
-        return node_dict
-    elif hasattr(xml_dom, 'data'):
-        print(xml_dom.data)
-        data = xml_dom.data
-        return data
-    else:
-        print(xml_dom)
-        for i in xml_dom.childNodes:
-            node_list.append(parse_xml(i))
-        return node_list
-
-def parse_raw(verse_ref, raw_text, strongs=False, morph=False):
-    """ Parse raw verse text and return a formated version.
-
-    """
-
-    xml_text = '''<?xml version="1.0"?>
-    <root xmlns="%s">
-    %s
-    </root>''' % (verse_ref.replace(' ', '_'), raw_text)
-
-    fix_space_regx = re.compile(r'([^\.:\?!])\s+')
-    fix_end_regx = re.compile(r'\s+([\.:\?!,;])')
-    parsed_xml = parseString(xml_text)
-    parsed_str = parse_xml(parsed_xml, strongs, morph)
-    fixed_str =fix_space_regx.sub('\\1 ', fix_end_regx.sub('\\1', parsed_str))
-    fixed_str1 = fixed_str
-    return fixed_str1
-    strongs_regx = re.compile(r'<((?:\033\[[\d+;]*m)*?[GH]\d*?(?:\033\[[\d+;]*m)*?)>')
-    morph_regx = re.compile(r'\{((?:\033\[[\d+;]*m)*?[\w-]*?(?:\033\[[\d+;]*m)*?)\}')
-    italic_regx = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
-    word_regx = re.compile(r'\b([\w-]+)\b')
-    strip_color_regx = re.compile('\033\[[\d;]*m')
-
-    def italic(match):
-        print(match.groups())
-        return word_regx.sub('\033[4m\\1\033[m', strip_color_regx.sub('', match.groups()[0]))
-    fixed_str =fix_space_regx.sub('\\1 ', fix_end_regx.sub('\\1', parsed_str))
-    fixed_str = fill('\033[32m%s\033[m: %s' % (verse_ref, fixed_str), screen_size()[1], break_on_hyphens=False)
-    fixed_str = italic_regx.sub(italic, fixed_str)
-    fixed_str = strongs_regx.sub('<\033[36m\\1\033[m>', fixed_str)
-    fixed_str = morph_regx.sub('{\033[35m\\1\033[m}', fixed_str)
-    print()
-    print(fixed_str)
-    print()
-    print()
-    return fixed_str1
-
 def render_verses_with_italics(ref_list, wrap=True, strongs=False, 
                                morph=False, highlight_func=None, *args):
     """ Renders a the verse text at verse_ref with italics highlighted.  
@@ -287,9 +195,6 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     """
 
     # The Strong's and Morphology matching regular expressions.
-    strongs_regx = re.compile(r'<([GH]\d*)>')
-    morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
-
     # Match strongs numbers.
     strongs_regx = re.compile(r'<((?:\033\[[\d;]*m)*?[GH]?\d+?(?:\033\[[\d;]*m)*?)>', re.I)
     # It needs to match with parenthesis or it will catch all capitalized
@@ -312,14 +217,7 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     # Get the local text encoding.
     encoding = get_encoding()
 
-    #italic_regx = re.compile(r'(?:<i>|<hi\s*type="italic">)([\W\w]*?)(?:</i>|</hi>)', re.I)
-    #highlight_italic_regx = re.compile(r'(?:&italic;)(\b\w+\b|<[^>]*>|\([^\)]*\)|\W|\s)*?(?:&italic/;)', re.I)
-    #cleanup_regx = re.compile(r'<[^>]*>')
-    #space_regx = re.compile(r'(>|\)|\w\b)(\b\w|<|\()')
-    #lt_regx = re.compile(r'&lt;', re.I)
-    #gt_regx = re.compile(r'&gt;', re.I)
     strip_color_regx = re.compile('\033\[[\d;]*m')
-    #word_regx = re.compile(r'\b([\w-]+)\b')
     italic_regx = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
     word_regx = re.compile(r'\b([\w-]+)\b')
 
@@ -329,37 +227,17 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
 
         """
         
+        # Strip any previous colors.
         match_text = strip_color_regx.sub('', match.groups()[0])
+        # Color the italics.
         return word_regx.sub(italic_highlight, match_text)
 
-        # Remove the italic tags.
-        #match_text = match.group().replace('&italic;', '')
-        #match_text = match_text.replace('&italic/;', '')
-        # Strip any previous colors.
-        #match_text = strip_color_regx.sub('', match_text)
-        # Color the italics.
-        #return word_regx.sub(italic_highlight, match_text)
-
     # Get an iterator over all the requested verses.
-    verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
-                               markup=Sword.FMT_HTMLHREF, raw=True)
+    #verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
+                               #markup=Sword.FMT_PLAIN, render='render_raw')
+    verse_iter = IndexedVerseTextIter(iter(ref_list), strongs, morph,
+                                      italic_markers=True)
     for verse_ref, verse_text in verse_iter:
-        #print(verse_text)
-        #print(parse_raw(verse_ref, verse_text, strongs, morph))
-        verse_text = parse_raw(verse_ref, verse_text, strongs, morph)
-        #exit()
-        # Find if Strong's Numbers should have G's or H's.
-        #strong_letter = 'G' if 'Strongs&type=Greek' in verse_text else 'H'
-        # First tag all italic text so we can get it later.
-        #verse_text = italic_regx.sub('&italic;\\1&italic/;', verse_text)
-        # Remove any other tags.
-        #verse_text = cleanup_regx.sub('', verse_text)
-        # Put <>'s in.
-        #verse_text = lt_regx.sub(' <%s' % strong_letter, verse_text)
-        #verse_text = gt_regx.sub('>', verse_text)
-        # Put space between Strong's and Morphology.
-        #verse_text = space_regx.sub('\\1 \\2', verse_text)
-
         # Encode than decode the verse text to make it compatable with
         # the locale.
         verse_text = verse_text.strip().encode(encoding, 'replace')
@@ -375,7 +253,6 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
                                                    end_color), verse_text)
 
         # Highlight the italic text we previously pulled out.
-        #verse_text = highlight_italic_regx.sub(italic_color, verse_text)
         verse_text = italic_regx.sub(italic_color, verse_text)
 
         # Highlight the different elements.
@@ -472,10 +349,6 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
     word_regx = re.compile(r'\b([\w-]+)\b')
     # Strip previous color.
     strip_color_regx = re.compile('\033\[[\d;]*m')
-    # Match right before a word.
-    before_bound = re.compile(r'(\A|[\W\s])\b', re.I)
-    # Match right after a word
-    after_bound = re.compile(r'\b([\s\W]|\Z)', re.I)
 
     def highlight_group(match):
         """ Highlight each word/Strong's Number/Morphological Tag in the
@@ -486,11 +359,6 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
         # Strip any previous colors.
         match_text = strip_color_regx.sub('', match.group())
         return word_regx.sub(highlight_text, match_text)
-        # Start the color right before the word.
-        #match_text = before_bound.sub('\\1\033[m%s' % highlight_color, match_text)
-        # End the color right after the word.
-        #match_text = after_bound.sub('\033[m\\1', match_text)
-        #return match_text
 
     verse_text = verse_text.strip()
     # Apply each highlighting regular expression to the text.
@@ -972,13 +840,15 @@ def build_highlight_regx5(search_list, case_sensitive):
     items in search_list as they appear in a verse.
 
     """
+
+    if not search_list:
+        return []
+
     regx_list = []
-    escape_morph = lambda m: '\{%s\}' % re.escape(m.groups()[0]).upper()
     for item in search_list:
         regx_list.append(Search.search_terms_to_regex(item, case_sensitive,
-                word_bound='(?:\033\[[\d;]*m|\\\\b)*',
-                extra_space=r'|\033\[[\d;]*m|\033', escape_morph=escape_morph,
-                not_morph_str=r'\{[^\}]*?\}'))
+                word_bound='(?:\033\[[\d;]*m|\\\\b)+',
+                extra_space='|\033\[[\d;]*m|\033'))
 
     return regx_list
 
@@ -1129,7 +999,7 @@ class VerseTextIter(object):
     """
 
     def __init__(self, reference_iter, strongs=False, morph=False,
-                 module='KJV', markup=Sword.FMT_PLAIN, raw=False):
+                 module='KJV', markup=Sword.FMT_PLAIN, render=''):
         """ Initialize.
 
         """
@@ -1160,8 +1030,12 @@ class VerseTextIter(object):
         self._module = self._library.getModule(module)
         self._key = self._module.getKey()
 
-        if raw:
+        if render.lower() == 'raw':
             self._render_func = self._module.getRawEntry
+        elif render.lower() == 'render_raw':
+            self._fix_space_regx = re.compile(r'([^\.:\?!])\s+')
+            self._fix_end_regx = re.compile(r'\s+([\.:\?!,;])')
+            self._render_func = lambda: self._parse_raw(self._module.getRawEntry(), strongs, morph)
         else:
             self._render_func = self._module.RenderText
 
@@ -1201,7 +1075,6 @@ class VerseTextIter(object):
 
         """
 
-        #verse_text = self._module.RenderText()
         verse_text = self._render_func()
         verse_text = '%s %s' % (self._get_heading(), verse_text)
 
@@ -1231,6 +1104,71 @@ class VerseTextIter(object):
         else:
             return ''
 
+    def _parse_xml(self, xml_dom, strongs=False, morph=False):
+        """ Recursively parse all the childNodes in a xml minidom, and build
+        the verse text.
+
+        """
+
+        # The string that will hold the verse.
+        verse_text = ''
+        # The name of the current tag.
+        name = xml_dom.localName if xml_dom.localName else ''
+        strongs_str = morph_str = ''
+        if xml_dom.attributes:
+            attr_dict = dict(xml_dom.attributes.items())
+            # Get any paragraph marker.
+            verse_text = attr_dict.get('marker', '')
+            # The type of this nodes children.
+            s_type = attr_dict.get('type', '')
+            italic_str = '%s'
+            for key, value in attr_dict.items():
+                # Italicize any added text.
+                if 'added' in value.lower():
+                    italic_str = '<i>%s</i>'
+                # Don't include any study notes.
+                elif 'study' in value.lower() or 'note' in name.lower():
+                    return verse_text
+                # Check for strongs.
+                elif 'lemma' in key.lower() and strongs:
+                    for num in value.split():
+                        strongs_str += ' <%s> ' % num.split(':')[1]
+                # Check for morphology.
+                elif 'morph' in key.lower() and morph:
+                    for tag in value.split():
+                        morph_str += ' {%s} ' % tag.split(':')[1]
+        # Recursively build the text from all the child nodes.
+        for node in xml_dom.childNodes:
+            child_s = self._parse_xml(node, strongs, morph)
+            if 'divine' in name.lower():
+                verse_text += ' %s' % child_s.upper()
+            else:
+                verse_text += ' %s' % child_s
+
+        if xml_dom.attributes:
+            return italic_str % '%s%s%s' % (verse_text, strongs_str, morph_str)
+        if hasattr(xml_dom, 'data'):
+            return xml_dom.data
+        return verse_text.strip()
+
+    def _parse_raw(self, raw_text, strongs=False, morph=False):
+        """ Parse raw verse text and return a formated version.
+
+        """
+
+        # A hack to make the raw text parse as xml.
+        xml_text = '''<?xml version="1.0"?>
+        <root xmlns="%s">
+        %s
+        </root>''' % ('verse', raw_text)
+
+        # It works now we can parse the xml dom.
+        parsed_xml = parseString(xml_text)
+        parsed_str = self._parse_xml(parsed_xml, strongs, morph)
+        # Make all the spacing correct.
+        fixed_str = self._fix_end_regx.sub('\\1', parsed_str)
+        return self._fix_space_regx.sub('\\1 ', fixed_str)
+
 
 class IndexedVerseTextIter(object):
     """ An iterable object for accessing verses in the Bible.  Maybe it will
@@ -1239,19 +1177,23 @@ class IndexedVerseTextIter(object):
     """
 
     def __init__(self, reference_iter, strongs=False, morph=False, 
-                 module='KJV'):
+                 module='KJV', italic_markers=False, added=True):
         """ Initialize.
 
         """
 
-        self._clean_morph_regex = re.compile(r' \(([A-Z\d-]*)\)')
-        self._clean_strongs_regex = re.compile(r' <([GH]\d*)>')
+        self._clean_morph_regex = re.compile(r' \{([\w-]+)\}')
+        self._clean_strongs_regex = re.compile(r' <([GH]\d+)>')
+        self._clean_markers_regex = re.compile(r'(<i>\s?|\s?</i>)')
+        self._remove_added_regex = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
 
         self._index_dict = IndexDict('%s' % module)
 
         self._ref_iter = reference_iter
         self._strongs = strongs
         self._morph = morph
+        self._keep_added = added
+        self._italic_markers = italic_markers
 
     def next(self):
         """ Returns the next verse reference and text.
@@ -1291,6 +1233,10 @@ class IndexedVerseTextIter(object):
             verse_text = self._clean_strongs_regex.sub('', verse_text)
         if not self._morph:
             verse_text = self._clean_morph_regex.sub('', verse_text)
+        if not self._italic_markers:
+            verse_text = self._clean_markers_regex.sub('', verse_text)
+        if not self._keep_added:
+            verse_text = self._remove_added_regex.sub('', verse_text)
 
         return verse_text
 
@@ -1494,12 +1440,12 @@ class IndexBible(object):
         self._module_name = module
 
         # Remove morphological and strongs information.
-        self._cleanup_regx = re.compile(r' (<([GH]\d*)>|\(([A-Z\d-]*)\))')
+        self._cleanup_regx = re.compile(r' (<([GH]\d*)>|\{([A-Z\d-]*)\})')
 
         self._non_alnum_regx = re.compile(r'\W')
         self._fix_regx = re.compile(r'\s+')
-        self._strongs_regx = re.compile(r'<([GH]\d*)>')
-        self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
+        self._strongs_regx = re.compile(r'<([GH]\d+)>')
+        self._morph_regx = re.compile(r'\{([\w-]+)\}')
 
         self._module_dict = defaultdict(list)
         # lower_case is used to store lower_case words case sensitive
@@ -1507,7 +1453,7 @@ class IndexBible(object):
         self._module_dict.update({ 'lower_case': defaultdict(list) })
 
         self._index_dict = {
-                '%s_index' % self._module_name: self._module_dict
+                '%s_index_i' % self._module_name: self._module_dict
                 }
 
         self._index_built = False
@@ -1586,7 +1532,8 @@ class IndexBible(object):
         """
 
         book_iter = BookIter(book_name)
-        verse_iter = VerseTextIter(book_iter, True, True, self._module_name)
+        verse_iter = VerseTextIter(book_iter, True, True, self._module_name,
+                                   render='render_raw')
 
         for verse_ref, verse_text in verse_iter:
             info_print('\033[%dD\033[KIndexing...%s' % \
@@ -1651,7 +1598,7 @@ class IndexDict(dict):
 
         """
 
-        self._non_key_text_regx = re.compile(r'[<>\(\)]')
+        self._non_key_text_regx = re.compile(r'[<>\{\}]')
 
         self._name = name
         self._lower_case = self.get('lower_case', {})
@@ -1671,7 +1618,7 @@ class IndexDict(dict):
         key = self._non_key_text_regx.sub('', key).strip()
         if self._name and (key not in self):
             # Load the value from the database if we don't have it.
-            with IndexDbm('%s_index.dbm' % self._name, 'r') as dbm_dict:
+            with IndexDbm('%s_index_i.dbm' % self._name, 'r') as dbm_dict:
                 self[key] = dbm_dict.get(key)
 
         return super(IndexDict, self).__getitem__(key)
@@ -1941,23 +1888,23 @@ class Search(object):
     _whitespace_regx = re.compile(r'\s')
 
     # Cleanup regular expressions.
-    _non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
+    _non_alnum_regx = re.compile(r'[^\w<>\{\}\(\)-]')
     _fix_regx = re.compile(r'\s+')
 
     # Match strongs numbers.
-    _strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
+    _strongs_regx = re.compile(r'[<]?(\b[GH]\d+\b)[>]?', re.I)
     # It needs to match with parenthesis or it will catch all capitalized
     # word and words with '-'s in them.
-    _morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
+    _morph_regx = re.compile(r'[\(\{](\b[\w-]+\b)[\}\)]', re.I)
     _word_regx = re.compile(r'\b([\w\\-]+)\b')
     _space_regx = re.compile(r'\s+')
     _non_word_regx = re.compile(r'[<>\(\)]')
 
     _fix_strongs = classmethod(lambda c, m: '<%s>' % m.groups()[0].upper())
-    _fix_morph = classmethod(lambda c, m: '(%s)' % m.groups()[0].upper())
+    _fix_morph = classmethod(lambda c, m: '{%s}' % m.groups()[0].upper())
 
     # Escape the morphological tags.
-    _escape_morph = classmethod(lambda c, m: '\(%s\)' % re.escape(m.groups()[0]).upper())
+    _escape_morph = classmethod(lambda c, m: '\{%s\}' % re.escape(m.groups()[0]).upper())
 
     def __init__(self, module='KJV'):
         """ Initialize the search.
@@ -1969,14 +1916,9 @@ class Search(object):
 
         self._module_name = module
 
-        # Searching regular expressions.
-        #self._strongs_regx = re.compile(r'<([GH]\d*)>')
-        #self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
-
     @classmethod
     def search_terms_to_regex(cls, search_terms, case_sensitive, 
-                              word_bound='\\\\b', extra_space='',
-                              escape_morph=None, not_morph_str=r'\([^\)]*\)'):
+                              word_bound='\\\\b', extra_space=''):
         """ Build a regular expression from the search_terms to match a verse
         in the Bible.
 
@@ -1990,7 +1932,7 @@ class Search(object):
         # This will skip Strong's Numbers.
         not_strongs_str = r'<[^>]*>'
         # This wil skip Morphological Tags.
-        #not_morph_str = r'\([^\)]*\)'
+        not_morph_str = r'\{[^\}]*\}'
         # This will skip all punctuation.  Skipping ()'s is a problem for
         # searching Morphological Tags, but it is necessary for the
         # parenthesized words.  May break highlighting.
@@ -2006,11 +1948,7 @@ class Search(object):
         # Phrases will have spaces in them
         phrase = bool(cls._whitespace_regx.search(temp_str))
         # Escape the morphological tags, and also find how many there are.
-        if not escape_morph:
-            temp_str, morph_count = cls._morph_regx.subn(cls._escape_morph, 
-                                                         temp_str)
-        else:
-            temp_str, morph_count = cls._morph_regx.subn(escape_morph, 
+        temp_str, morph_count = cls._morph_regx.subn(cls._escape_morph, 
                                                          temp_str)
         # Make all Strong's Numbers uppercase, also find how many there are.
         temp_str, strongs_count = cls._strongs_regx.subn(cls._fix_strongs, 
@@ -2033,7 +1971,7 @@ class Search(object):
             if not bool(morph_count):
                 # Skip all Morphological Tags.
                 space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not words_found or bool(strongs_count):
+            if not words_found or bool(morph_count) or bool(strongs_count):
                 # Skip words.  If word attributes are in the search we can
                 # skip over words and still keep it a phrase.
                 space_str = r'%s|%s' % (space_str, not_words_str)
