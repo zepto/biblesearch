@@ -476,13 +476,14 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False):
     # Extra space filler to pass over ansi color escape sequences.
     extra_space='|\033\[[\d;]*m|\033'
     for item in search_list:
-        is_regex=('*' in item or item.startswith('&'))
-        if '*' in item and not item.startswith('&'):
+        item = item.strip()
+        is_regex=(item.startswith('&'))
+        #if '*' in item and not item.startswith('&'):
             # Build a little regular expression to highlight partial words.
-            item = item[1:] if item[0] in '!^+|' else item
-            item = item.replace('*', '\w*')
-            item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
-        elif item.startswith('&'):
+            #item = item[1:] if item[0] in '!^+|' else item
+            #item = item.replace('*', '\w*')
+            #item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
+        if item.startswith('&'):
             # Just use a regular expression. ('&' mark the term as a regular
             # expression.)
             item = item[1:]
@@ -1799,7 +1800,7 @@ class Search(object):
     # It needs to match with braces or it will catch all capitalized
     # word and words with '-'s in them.
     _morph_regx = re.compile(r'[\(\{](\b[\w-]+\b)[\}\)]', re.I)
-    _word_regx = re.compile(r'\b([\w\\-]+)\b')
+    _word_regx = re.compile(r'\b([\*\w\\-]+)\b')
     _space_regx = re.compile(r'\s+')
     _non_word_regx = re.compile(r'[<>\(\)]')
 
@@ -1850,12 +1851,18 @@ class Search(object):
         not_punct_str = r'[\s,\?\!\.;:\\/_\(\)\[\]"\'-]'
         # This will skip ansi color.
         not_color_str = r'\033\[[\d;]*m'
+        # Match all *'s
+        star_regx = re.compile(r'\*')
 
         # Hold the string that fills space between search terms.
         space_str = ''
 
+        # Get stars past so we can replace them with '\w*' later.
+        temp_str, word_count = star_regx.subn(r'_star_', search_terms)
+
         # Hack to get rid of unwanted characters.
-        temp_str = ' '.join(cls._non_alnum_regx.sub(' ', search_terms).split())
+        temp_str = cls._non_alnum_regx.sub(' ', temp_str).split()
+        temp_str = ' '.join(temp_str)
         # Phrases will have spaces in them
         phrase = bool(cls._whitespace_regx.search(temp_str))
         # Escape the morphological tags, and also find how many there are.
@@ -1865,9 +1872,13 @@ class Search(object):
         temp_str, strongs_count = cls._strongs_regx.subn(cls._fix_strongs, 
                                                          temp_str)
         # Select all words.
-        #temp_str, word_count = cls._word_regx.subn('(\\\\b\\1\\\\b)', temp_str)
+        #repl = '(\\\\b\\1\\\\b)'
         # This works = temp_str, word_count = cls._word_regx.subn('{0}(\\1){0}'.format(word_bound), temp_str)
-        temp_str, word_count = cls._word_regx.subn('({0}(\\1){0})'.format(word_bound), temp_str)
+        repl = '({0}(\\1){0})'.format(word_bound)
+        temp_str, word_count = cls._word_regx.subn(repl, temp_str)
+        # Replace what used to be *'s with '\w*'.
+        temp_str = temp_str.replace('_star_', '\w*')
+
         # All the Strong's and Morphology were changed in the previous
         # substitution, so if that number is greater than the number of
         # Strong's plus Morphology then there were words in the search terms.
@@ -2211,21 +2222,27 @@ class Search(object):
 
         info_print("Searching for verses with any of these partial words '%s'..." % ', '.join(search_terms.split()), tag=1)
 
-        found_set = set()
+        found_set = self._index_dict.value_union(
+                self._words_from_partial(search_terms), case_sensitive)
+
+        return found_set
+
+    def _words_from_partial(self, partial_word_list):
+        """ Search through a list of partial words and yield words that match.
+
+        """
 
         # Split the search terms and search through each word key in the index
         # for any word that contains the partial word.
-        term_list = search_terms.split()
+        word_list = partial_word_list.split()
         for word in self._index_dict['_words_']:
-            for term in term_list:
+            for partial_word in word_list:
                 # A Regular expression that matches any number of word
                 # characters for every '*' in the term.
-                reg_str = '\\b%s\\b' % term.replace('*', '\w*')
-                term_regx = re.compile(reg_str, re.I)
-                if term_regx.match(word):
-                    found_set.update(self._index_dict[word])
-
-        return found_set
+                reg_str = '\\b%s\\b' % partial_word.replace('*', '\w*')
+                word_regx = re.compile(reg_str, re.I)
+                if word_regx.match(word):
+                    yield word
 
     def _process_phrase(func):
         """ Returns a wrapper function for wrapping phrase like searches.
@@ -2518,7 +2535,8 @@ class Search(object):
         return found_set
 
     def sword_search(self, search_terms, strongs=False, morph=False,
-                     case_sensitive=False, range_str='', search_type='lucene'):
+                     added=True, case_sensitive=False, range_str='',
+                     search_type='lucene'):
         """ sword_search(self, search_terms, strongs=False, morph=False,
                 case_sensitive=False, range_str='', search_type=-4) -> 
         Use the sword module to search for the terms.
@@ -2746,16 +2764,9 @@ class Search(object):
         found_set = set()
         strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
         morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
-        #tag_regx = re.compile(r'''
-                #([^<]*)                             # Before tag.
-                #<(?P<tag>q|w|transChange|note)      # Tag name.
-                #([^>]*)>                            # Tag attributes.
-                #([\w\W]*?)</(?P=tag)>               # Tag text and end.
-                #([^<]*)                             # Between tags. 
-                #''', re.I|re.X)
         tag_regx = re.compile(r'''
                 ([^<]*)                             # Before tag.
-                <(?P<tag>seg|q|w|transChange|note)  # Tag name.
+                <(?P<tag>q|w|transChange|note)      # Tag name.
                 ([^>]*)>                            # Tag attributes.
                 ([\w\W]*?)</(?P=tag)>               # Tag text and end.
                 ([^<]*)                             # Between tags. 
@@ -2765,61 +2776,18 @@ class Search(object):
         div_upper = lambda m: m.group(1).upper() + m.group(2)
         marker_regx = re.compile(r'.*marker="(.)".*', re.I)
         term_dict = defaultdict(list)
-        len_attrs = 10
-        def recurse_tag(text, term, verse_ref, ctag_attr=''):
-            """ Recursively parse raw verse text using regular expressions, and
-            returns the correctly formatted text.
-
-            """
-
-            term_list = []
-            for match in tag_regx.finditer(text):
-                value_list = attr_list = []
-                strong_list = []
-                morph_list = []
-                opt, tag_name, tag_attr, tag_text, punct = match.groups()
-                if match.re.search(tag_text):
-                    term_list.extend(recurse_tag(tag_text, term, verse_ref, tag_attr))
-                else:
-                    info_print((opt, tag_name, tag_attr, tag_text, punct), tag=4)
-                    if marker_regx.match(opt):
-                        opt = ''
-                    tag_text = opt + divname_regx.sub(div_upper, tag_text)
-                    if term.upper() in tag_attr or term.upper() in ctag_attr:
-                        if strong_regx.match(term):
-                            strong_list = [term.upper()]
-                        elif morph_regx.match(term):
-                            morph_list = [term.upper()]
-                    elif term_regx.search(tag_text):
-                        if strongs or not morph:
-                            strong_list.extend(strong_regx.findall(tag_attr))
-                            strong_list.extend(strong_regx.findall(ctag_attr))
-                        if morph:
-                            morph_list.extend(morph_regx.findall(tag_attr))
-                            morph_list.extend(morph_regx.findall(ctag_attr))
-                        for lst in (strong_list, morph_list):
-                            if lst:
-                                a_str = '%s"' % '", "'.join(lst)
-                                value_list = [a_str, tag_text.strip()]
-                                term_list.append({verse_ref:value_list})
-            return term_list
+        len_attrs = 0
 
         for verse_ref, verse_text in verse_iter:
             #print(render_raw(verse_text, strongs, morph))
             #print(render_raw2(verse_text, strongs, morph))
             #continue
             for term in search_terms.split():
-                v_text = ''
-                info_print('%s\n' % verse_text, tag=4)
                 term = term.replace('<', '').replace('>', '')
                 term = term.replace('{', '').replace('}', '')
+                v_text = ''
+                info_print('%s\n' % verse_text, tag=4)
                 term_regx = re.compile('\\b%s\\b' % term, re.I)
-                value_list = recurse_tag(verse_text, term, verse_ref)
-                if value_list:
-                    for i in value_list:
-                        len_attrs = max(len(i[verse_ref][0]), len_attrs)
-                    term_dict[term].extend(value_list)
-                continue
                 for match in tag_regx.finditer(verse_text):
                     opt, tag_name, tag_attr, tag_text, punct = match.groups()
                     tag_text = xadded_regx.sub('\\1', tag_text)
@@ -2831,6 +2799,7 @@ class Search(object):
                         opt, tag_name, tag_attr, tag_text, punct = tag_tup
                         info_print(tag_tup, tag=4)
                         value_list = []
+                        attr_list = []
                         strongs_list = []
                         morph_list = []
                         tag_text = divname_regx.sub(div_upper, tag_text)
@@ -2843,13 +2812,114 @@ class Search(object):
                             if morph:
                                 morph_list = morph_regx.findall(tag_attr)
 
-                            for lst in (strongs_list, morph_list):
-                                if lst:
-                                    attr_str = '%s"' % '", "'.join(lst)
-                                    value_list = [attr_str, tag_text.strip()]
-                                    term_dict[term].append({verse_ref:value_list})
-                                    len_attrs = max(len(attr_str), len_attrs)
+                        for lst in (strongs_list, morph_list, attr_list):
+                            if lst:
+                                attr_str = '%s"' % '", "'.join(lst)
+                                value_list = [attr_str, tag_text.strip()]
+                                term_dict[term].append({verse_ref:value_list})
+                                len_attrs = max(len(attr_str), len_attrs)
                 info_print(v_text, tag=4)
+        max_len_ref = len(max(ref_set, key=len))
+        for term, lst in term_dict.items():
+            print('%s:' % term)
+            for dic in lst:
+                ref, (attrs, s) = list(dic.items())[0]
+                s_l = '{1:{0}}: "{2}'.format(len_attrs, attrs, s)
+                print('\t{0:{1}}: "{2}"'.format(ref, max_len_ref, s_l))
+                
+
+        exit()
+
+    @_process_search
+    def test4_search(self, search_terms, strongs=False, morph=False,
+                     added=True, case_sensitive=False, range_str=''):
+        """ A Test.
+
+        """
+
+        ref_set = self._index_dict.value_union(search_terms.split(), 
+                                                 case_sensitive)
+        if range_str:
+            # Only search through the supplied range.
+            ref_set.intersection_update(range_str)
+
+        if not ref_set:
+            exit()
+
+        ref_iter = iter(sorted(ref_set, key=sort_key))
+        # Get an iterator that will return tuples
+        # (verse_reference, verse_text).
+        verse_iter = VerseTextIter(ref_iter, strongs=strongs,
+                                   morph=morph, render='raw',
+                                   module=self._module_name)
+
+        found_set = set()
+        strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
+        morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
+        tag_regx = re.compile(r'''
+                ([^<]*)                             # Before tag.
+                <(?P<tag>seg|q|w|transChange|note)  # Tag name.
+                ([^>]*)>                            # Tag attributes.
+                ([\w\W]*?)</(?P=tag)>               # Tag text and end.
+                ([^<]*)                             # Between tags. 
+                ''', re.I|re.X)
+        divname_regx = re.compile(r'<(?:divineName)>([^<]*?)([\'s]*)</(?:divineName)>', re.I)
+        div_upper = lambda m: m.group(1).upper() + m.group(2)
+        marker_regx = re.compile(r'.*marker="(.)".*', re.I)
+        term_dict = defaultdict(list)
+        len_attrs = 0
+        def recurse_tag(text, term, verse_ref, ctag_attr=''):
+            """ Recursively parse raw verse text using regular expressions, and
+            returns the correctly formatted text.
+
+            """
+
+            term_list = []
+            for match in tag_regx.finditer(text):
+                value_list = []
+                attr_list = []
+                strongs_list = []
+                morph_list = []
+                opt, tag_name, tag_attr, tag_text, punct = match.groups()
+                if match.re.search(tag_text):
+                    term_list.extend(recurse_tag(tag_text, term, verse_ref, tag_attr))
+                else:
+                    info_print((opt, tag_name, tag_attr, tag_text, punct), tag=4)
+                    if marker_regx.match(opt):
+                        opt = ''
+                    tag_text = opt + divname_regx.sub(div_upper, tag_text) + punct
+                    if term.upper() in tag_attr or term.upper() in ctag_attr:
+                        attr_list = [term.upper()]
+                    elif term_regx.search(tag_text):
+                        if strongs or not morph:
+                            strongs_list.extend(strong_regx.findall(tag_attr))
+                            strongs_list.extend(strong_regx.findall(ctag_attr))
+                        if morph:
+                            morph_list.extend(morph_regx.findall(tag_attr))
+                            morph_list.extend(morph_regx.findall(ctag_attr))
+                    for lst in (strongs_list, morph_list, attr_list):
+                        if lst:
+                            a_str = '%s"' % '", "'.join(lst)
+                            value_list = [a_str, tag_text.strip()]
+                            term_list.append({verse_ref:value_list})
+            return term_list
+
+        for verse_ref, verse_text in verse_iter:
+            #print(render_raw(verse_text, strongs, morph))
+            #print(render_raw2(verse_text, strongs, morph))
+            #continue
+            for term in search_terms.split():
+                term = term.replace('<', '').replace('>', '')
+                term = term.replace('{', '').replace('}', '')
+                v_text = ''
+                info_print('%s\n' % verse_text, tag=4)
+                term_regx = re.compile('\\b%s\\b' % term, re.I)
+                value_list = recurse_tag(verse_text, term, verse_ref)
+                if value_list:
+                    for i in value_list:
+                        len_attrs = max(len(i[verse_ref][0]), len_attrs)
+                    term_dict[term].extend(value_list)
+
         max_len_ref = len(max(ref_set, key=len))
         for term, lst in term_dict.items():
             print('%s:' % term)
