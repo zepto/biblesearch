@@ -215,7 +215,7 @@ def parse_raw(verse_ref, raw_text, strongs=False, morph=False):
 
 def render_verses_with_italics(ref_list, wrap=True, strongs=False, 
                                morph=False, highlight_func=None, *args):
-    """ Renders a the verse text at verse_ref.  
+    """ Renders a the verse text at verse_ref with italics highlighted.  
     Returns a strong "verse_ref: verse_text"
         wrap            -   Whether to wrap the text.
         strongs         -   Include Strong's Numbers in the output.
@@ -235,38 +235,37 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
 
     # Match strongs numbers.
-    strongs_regx = re.compile(r'<(?:\033\[[\d;]*m)*([GH]?\d+)(?:\033\[[\d;]*m)*>', re.I)
+    strongs_regx = re.compile(r'<(?:\033\[[\d;]*m)*?([GH]?\d+)(?:\033\[[\d;]*m)*?>', re.I)
     # It needs to match with parenthesis or it will catch all capitalized
     # word and words with '-'s in them.
-    morph_regx = re.compile(r'\((?:\033\[[\d;]*m)*([\w-]+)(?:\033\[[\d;]*m)*\)', re.I)
+    morph_regx = re.compile(r'\((?:\033\[[\d;]*m)*?([A-Z\d-]+)(?:\033\[[\d;]*m)*?\)')
 
     # Set the colors of different items.
-    strongs_color = '\033[36m'
-    morph_color = '\033[35m'
+    strongs_color = '\033[35m'
+    morph_color = '\033[1;36m'
     ref_color = '\033[32m'
-    italic_color = '\033[3;4;33m'
+    italic_color = '\033[4m'
     end_color = '\033[m'
 
     # Build replacement strings that highlight Strong's Numbers and 
     # Morphological Tags.
     strongs_highlight = '<%s\\1%s>' % (strongs_color, end_color)
     morph_highlight = '(%s\\1%s)' % (morph_color, end_color)
-    italic_highlight = '%s%s\\1%s' % (end_color, italic_color, end_color)
+    italic_highlight = '%s\\1%s' % (italic_color, end_color)
 
     # Get the local text encoding.
     encoding = get_encoding()
 
-    italic_regx = re.compile(r'(?:<i>|<hi\s*type="italic">)([\W\w\s]+?)(?:</i>|</hi>)', re.I)
+    italic_regx = re.compile(r'(?:<i>|<hi\s*type="italic">)([\W\w]*?)(?:</i>|</hi>)', re.I)
     highlight_italic_regx = re.compile(r'(?:&italic;)(\b\w+\b|<[^>]*>|\([^\)]*\)|\W|\s)*?(?:&italic/;)', re.I)
     cleanup_regx = re.compile(r'<[^>]*>')
-    space_regx = re.compile(r'([>\)])([<\(])')
+    space_regx = re.compile(r'(>|\)|\w\b)(\b\w|<|\()')
     lt_regx = re.compile(r'&lt;', re.I)
     gt_regx = re.compile(r'&gt;', re.I)
     strip_color_regx = re.compile('\033\[[\d;]*m')
     word_regx = re.compile(r'\b([\w-]+)\b')
 
-    # Get an iterator over all the requested verses.
-    verse_iter = VerseTextIter(iter(ref_list), strongs, morph, markup=Sword.FMT_HTMLHREF) #raw=True)
+    # A substitution replacement function for highlighting italics.
     def italic_color(match):
         """ Color italic text, but first remove any previous color.
 
@@ -280,6 +279,9 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         # Color the italics.
         return word_regx.sub(italic_highlight, match_text)
 
+    # Get an iterator over all the requested verses.
+    verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
+                               markup=Sword.FMT_HTMLHREF)
     for verse_ref, verse_text in verse_iter:
         # Find if Strong's Numbers should have G's or H's.
         strong_letter = 'G' if 'Strongs&type=Greek' in verse_text else 'H'
@@ -318,8 +320,6 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
 
         # Highlight the different elements.
         if highlight_func:
-            # First highlight with highlight_func so we don't mess up the
-            # verse text for it.
             verse_text = highlight_func(verse_text, strongs, morph, *args)
 
         # Finally produce the formated text.
@@ -401,7 +401,7 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
 
     """
 
-    highlight_color = '\033[1m'
+    highlight_color = '\033[7m'
     highlight_text = '\033[m%s\\1\033[m' % highlight_color
     word_regx = re.compile(r'\b([\w-]+)\b')
     # Strip previous color.
@@ -908,7 +908,8 @@ def build_highlight_regx5(search_list, case_sensitive):
     """
     regx_list = []
     for item in search_list:
-        regx_list.append(Search.search_terms_to_regex(item, case_sensitive, word_bound='(?:\033\[[\d;]*m|\\\\b)*'))
+        regx_list.append(Search.search_terms_to_regex(item, case_sensitive, word_bound='(?:\033\[[\d;]*m|\\\\b)*', extra_space=r'|\033\[[\d;]*m|\033'))
+        #regx_list.append(Search.search_terms_to_regex(item, case_sensitive))
 
     return regx_list
 
@@ -1903,6 +1904,74 @@ class Search(object):
         #self._strongs_regx = re.compile(r'<([GH]\d*)>')
         #self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
 
+    @classmethod
+    def search_terms_to_regex(cls, search_terms, case_sensitive, 
+                              word_bound='\\\\b', extra_space=''):
+        """ Build a regular expression from the search_terms to match a verse
+        in the Bible.
+
+        """
+
+        # Set the flags for the regular expression.
+        flags = re.I if not case_sensitive else 0
+
+        # This will skip words.
+        not_words_str = r'\b\w+\b'
+        # This will skip Strong's Numbers.
+        not_strongs_str = r'<[^>]*>'
+        # This wil skip Morphological Tags.
+        not_morph_str = r'\([^\)]*\)'
+        # This will skip all punctuation.
+        not_punct_str = r'[\s,\?\!\.;:\\/_\(\)\{\}\[\]"\'-]'
+        # This will skip ansi color.
+        not_color_str = r'\033\[[\d;]*m'
+
+        # Hold the string that fills space between search terms.
+        space_str = ''
+
+        # Hack to get rid of unwanted characters.
+        temp_str = ' '.join(cls._non_alnum_regx.sub(' ', search_terms).split())
+        # Phrases will have spaces in them
+        phrase = bool(cls._whitespace_regx.search(temp_str))
+        # Escape the morphological tags, and also find how many there are.
+        temp_str, morph_count = cls._morph_regx.subn(cls._escape_morph, 
+                                                     temp_str)
+        # Make all Strong's Numbers uppercase, also find how many there are.
+        temp_str, strongs_count = cls._strongs_regx.subn(cls._fix_strongs, 
+                                                         temp_str)
+        # Select all words.
+        #temp_str, word_count = cls._word_regx.subn('(\\\\b\\1\\\\b)', temp_str)
+        temp_str, word_count = cls._word_regx.subn('({0}\\1{0})'.format(word_bound), temp_str)
+        # All the Strong's and Morphology were changed in the previous
+        # substitution, so if that number is greater than the number of
+        # Strong's plus Morphology then there were words in the search terms.
+        # I do this because I don't know how to only find words.
+        words_found = (strongs_count + morph_count) < word_count
+        if phrase:
+            # Build the string that is inserted between the items in the 
+            # search string.
+            space_str = r'(?:%s%s' % (not_punct_str, extra_space)
+            if not bool(strongs_count):
+                # Skip over all Strong's Numbers.
+                space_str = r'%s|%s' % (space_str, not_strongs_str)
+            if not bool(morph_count):
+                # Skip all Morphological Tags.
+                space_str = r'%s|%s' % (space_str, not_morph_str)
+            if not words_found or bool(strongs_count):
+                # Skip words.  If word attributes are in the search we can
+                # skip over words and still keep it a phrase.
+                space_str = r'%s|%s' % (space_str, not_words_str)
+            # Finally make it not greedy.
+            space_str = r'%s)*?' % space_str
+        else:
+            space_str = ''
+        # Re-combine the search terms with the regular expression string
+        # between each element.
+        reg_str = space_str.join(temp_str.split())
+        #print(reg_str)
+
+        return re.compile(reg_str, flags)
+
     def _sorted_iter(self, verse_ref_set):
         """ Returns an iterator over a sorted version of verse_ref_set.
 
@@ -2117,60 +2186,6 @@ class Search(object):
         return found_set
 
     @_process_search
-    def regex_search(self, search_terms, strongs=False, morph=False,
-                     case_sensitive=False, range_str=''):
-        """ regex_search(self, search_terms, strongs=False, morph=False,
-              case_sensitive=False, range_str='') -> 
-        Perform a regular expression search.
-
-            search_terms    -   Terms to search for.
-            strongs         -   Search for Strong's Number phrases.
-            morph           -   Search for Morphological Tag phrases.
-            case_sensitive  -   Perform a case sensitive search.
-            range_str       -   A verse range to limit the search to.
-
-        """
-
-        info_print("Searching for regular expression '%s'..." % search_terms)
-
-        # re.I is case insensitive.
-        flags = re.I if not case_sensitive else 0
-        # Make a regular expression from the search_terms.
-        search_regx = re.compile(r'%s' % search_terms, flags)
-
-        if range_str:
-            # Only search through the supplied range.
-            v_iter = self._sorted_iter(range_str)
-        else:
-            # Search the entire Bible.
-            v_iter = VerseIter('Genesis 1:1')
-
-        # The iter returns a tuple (verse_ref, verse_text).
-        verse_iter = IndexedVerseTextIter(v_iter, strongs=strongs, morph=morph,
-                                          module=self._module_name)
-
-        # The set that will be returned with all the references whose text
-        # matches the regular expression.
-        found_verses = set()
-        for verse_ref, verse_text in verse_iter:
-            # Take this out to gain a little speed.
-            info_print('\033[%dD\033[KSearching...%s' % \
-                       (len(verse_ref) + 20, verse_ref), end='')
-
-            if search_regx.search(verse_text):
-                found_verses.add(verse_ref)
-            elif not strongs and not morph:
-                # Should we do this or should we trust the user knows what
-                # puctuation are in the verses?
-                clean_verse_text = self._clean_text(verse_text)
-                if search_regx.search(clean_verse_text):
-                    found_verses.add(verse_ref)
-
-        info_print("...Done.")
-
-        return found_verses
-
-    @_process_search
     def multiword_search(self, search_terms, strongs=False, morph=False,
                          case_sensitive=False, range_str=''):
         """ multiword_search(self, search_terms, strongs=False, morph=False,
@@ -2274,9 +2289,6 @@ class Search(object):
         # Sort the list so it may be a little faster.  Only needed if we're
         # using the sword module to look them up.
         ref_iter = self._sorted_iter(ref_set)
-        verse_iter = IndexedVerseTextIter(ref_iter, strongs=True, 
-                                          morph=True, 
-                                          module=self._module_name)
 
         # Make all the terms the same case if case doesn't matter.
         flags = re.I if not case_sensitive else 0
@@ -2294,78 +2306,7 @@ class Search(object):
         
         search_regx = re.compile(search_reg_str, flags)
 
-        found_set = set()
-        for verse_ref, verse_text in verse_iter:
-            # Search for matches in the verse text.
-            if search_regx.search(verse_text):
-                found_set.add(verse_ref)
-
-        return found_set
-
-    @classmethod
-    def search_terms_to_regex(cls, search_terms, case_sensitive, 
-                              word_bound='\\\\b'):
-        """ Build a regular expression from the search_terms to match a verse
-        in the Bible.
-
-        """
-
-        # Set the flags for the regular expression.
-        flags = re.I if not case_sensitive else 0
-
-        # This will skip words.
-        not_words_str = r'\b\w+\b'
-        # This will skip Strong's Numbers.
-        not_strongs_str = r'<[^>]*>'
-        # This wil skip Morphological Tags.
-        not_morph_str = r'\([^\)]*\)'
-        # This will skip all punctuation.
-        not_punct_str = r'[\s,\.;:\\/_\(\)\{\}\[\]"\'-]'
-
-        # Hold the string that fills space between search terms.
-        space_str = ''
-
-        # Hack to get rid of unwanted characters.
-        temp_str = ' '.join(cls._non_alnum_regx.sub(' ', search_terms).split())
-        # Phrases will have spaces in them
-        phrase = bool(cls._whitespace_regx.search(temp_str))
-        # Escape the morphological tags, and also find how many there are.
-        temp_str, morph_count = cls._morph_regx.subn(cls._escape_morph, 
-                                                     temp_str)
-        # Make all Strong's Numbers uppercase, also find how many there are.
-        temp_str, strongs_count = cls._strongs_regx.subn(cls._fix_strongs, 
-                                                         temp_str)
-        # Select all words.
-        #temp_str, word_count = cls._word_regx.subn('((?:\033\[[\d;]*m|\\\\b)*\\1(?:\\\\b|\033\[[\d;]*m)*)', 
-        temp_str, word_count = cls._word_regx.subn('({0}\\1{0})'.format(word_bound), temp_str)
-        # All the Strong's and Morphology were changed in the previous
-        # substitution, so if that number is greater than the number of
-        # Strong's plus Morphology then there were words in the search terms.
-        # I do this because I don't know how to only find words.
-        words_found = (strongs_count + morph_count) < word_count
-        if phrase:
-            # Build the string that is inserted between the items in the 
-            # search string.
-            space_str = r'(?:%s' % not_punct_str
-            if not bool(strongs_count):
-                # Skip over all Strong's Numbers.
-                space_str = r'%s|%s' % (space_str, not_strongs_str)
-            if not bool(morph_count):
-                # Skip all Morphological Tags.
-                space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not words_found or bool(morph_count) or bool(strongs_count):
-                # Skip words.  If word attributes are in the search we can
-                # skip over words and still keep it a phrase.
-                space_str = r'%s|%s' % (space_str, not_words_str)
-            # Finally make it not greedy.
-            space_str = r'%s)*?' % space_str
-        else:
-            space_str = ''
-        # Re-combine the search terms with the regular expression string
-        # between each element.
-        reg_str = space_str.join(temp_str.split())
-
-        return re.compile(reg_str, flags)
+        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
 
     @_process_search
     def mixed_phrase_search(self, search_terms, strongs=False, morph=False, 
@@ -2406,6 +2347,73 @@ class Search(object):
         # Disable Strong's and Morphological if only words are used.
         strongs = bool(self._strongs_regx.search(search_terms))
         morph = bool(self._morph_regx.search(search_terms))
+        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+
+    @_process_search
+    def regex_search(self, search_terms, strongs=False, morph=False,
+                     case_sensitive=False, range_str=''):
+        """ regex_search(self, search_terms, strongs=False, morph=False,
+              case_sensitive=False, range_str='') -> 
+        Perform a regular expression search.
+
+            search_terms    -   Terms to search for.
+            strongs         -   Search for Strong's Number phrases.
+            morph           -   Search for Morphological Tag phrases.
+            case_sensitive  -   Perform a case sensitive search.
+            range_str       -   A verse range to limit the search to.
+
+        """
+
+        info_print("Searching for regular expression '%s'..." % search_terms)
+
+        # re.I is case insensitive.
+        flags = re.I if not case_sensitive else 0
+        # Make a regular expression from the search_terms.
+        search_regx = re.compile(r'%s' % search_terms, flags)
+
+        if range_str:
+            # Only search through the supplied range.
+            v_iter = self._sorted_iter(range_str)
+        else:
+            # Search the entire Bible.
+            v_iter = VerseIter('Genesis 1:1')
+
+        return self.find_from_regex(v_iter, search_regx, strongs, morph)
+
+        # The iter returns a tuple (verse_ref, verse_text).
+        verse_iter = IndexedVerseTextIter(v_iter, strongs=strongs, morph=morph,
+                                          module=self._module_name)
+
+        # The set that will be returned with all the references whose text
+        # matches the regular expression.
+        found_verses = set()
+        for verse_ref, verse_text in verse_iter:
+            # Take this out to gain a little speed.
+            info_print('\033[%dD\033[KSearching...%s' % \
+                       (len(verse_ref) + 20, verse_ref), end='')
+
+            if search_regx.search(verse_text):
+                found_verses.add(verse_ref)
+            elif not strongs and not morph:
+                # Should we do this or should we trust the user knows what
+                # puctuation are in the verses?
+                clean_verse_text = self._clean_text(verse_text)
+                if search_regx.search(clean_verse_text):
+                    found_verses.add(verse_ref)
+
+        info_print("...Done.")
+
+        return found_verses
+
+    def find_from_regex(self, ref_iter, search_regex, strongs=False,
+                        morph=False):
+        """ Iterates through all the verses in the ref iter iterator and
+        returns a list of verses whose text matches search_regx.
+
+        """
+
+        # Get an iterator that will return tuples
+        # (verse_reference, verse_text).
         verse_iter = IndexedVerseTextIter(ref_iter, strongs=strongs,
                                           morph=morph,
                                           module=self._module_name)
@@ -2413,9 +2421,9 @@ class Search(object):
         found_set = set()
         for verse_ref, verse_text in verse_iter:
             # Search for matches in the verse text.
-            if search_regx.search(verse_text):
+            if search_regex.search(verse_text):
                 found_set.add(verse_ref)
-
+        
         return found_set
 
     def mixed_search(self, search_terms, strongs=False, morph=False, 
@@ -2836,3 +2844,4 @@ if __name__ == '__main__':
 
     #with StdoutRedirect(stdout_to_stderr):
     main(args, **options.__dict__)
+    re.purge()
