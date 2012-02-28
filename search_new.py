@@ -662,7 +662,7 @@ from cmd import Cmd
 from difflib import get_close_matches
 from os import getcwd, getenv
 from functools import wraps, partial
-from optparse import OptionParser
+from argparse import ArgumentParser
 from time import strftime, mktime, localtime
 from textwrap import wrap, fill, TextWrapper, dedent
 from struct import unpack
@@ -3556,11 +3556,11 @@ class Search(object):
         strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
         morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
         tag_regx = re.compile(r'''
-                ([^<]*)                             # Before tag.
-                <(?P<tag>seg|q|w|transChange|note)  # Tag name.
-                ([^>]*)>                            # Tag attributes.
-                ([\w\W]*?)</(?P=tag)>               # Tag text and end.
-                ([^<]*)                             # Between tags. 
+                ([^<>]*)                                # Before tag.
+                <(?P<tag>seg|q|w|transChange|note|title)# Tag name.
+                ([^>]*)>                                # Tag attributes.
+                ([\w\W]*?)</(?P=tag)>                   # Tag text and end.
+                ([^<]*)                                 # Between tags. 
                 ''', re.I|re.X)
         divname_regx = re.compile(r'<(?:divineName)>([^<]*?)([\'s]*)</(?:divineName)>', re.I)
         div_upper = lambda m: m.group(1).upper() + m.group(2)
@@ -3629,6 +3629,8 @@ class Search(object):
                 print('\t{0:{1}}: "{2}"'.format(ref, max_len_ref, s_l))
                 
         return set()
+
+    concordance_search = test4_search
 
 
 class SearchCmd(Cmd):
@@ -4585,82 +4587,83 @@ def main(arg_list, **kwargs):
 
 
 if __name__ == '__main__':
-    parser = OptionParser(description="Bible search.")
-    parser.add_option('-i', '--index', action='store_true', default=False,
+    parser = ArgumentParser(description="Bible search.")
+    parser.add_argument('-i', '--index', action='store_true', default=False,
                         help='(Re-)build the search index.',
                         dest='build_index')
-    parser.add_option('-s', '--search-type', action='store', default='mixed',
+    parser.add_argument('-s', '--search-type', action='store', default='mixed',
             help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, mixed_phrase, ordered_multiword, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: phrase)',
             dest='search_type')
-    parser.add_option('-S', '--strongs', action='store_true', default=False,
+    parser.add_argument('-S', '--strongs', action='store_true', default=False,
                         help='Search for strongs numbers. (Ignored in mixed search)', dest='search_strongs')
-    parser.add_option('-M', '--morph', action='store_true', default=False,
+    parser.add_argument('-M', '--morph', action='store_true', default=False,
                         help='Search for morphological tags. (Ignored in mixed search)', dest='search_morphology')
-    parser.add_option('-C', '--case', action='store_true', default=False,
+    parser.add_argument('-C', '--case', action='store_true', default=False,
                         help='Case sensitive. (Ignored in regex search)',
                         dest='case_sensitive')
-    parser.add_option('-R', '--range', action='store', default='',
+    parser.add_argument('-R', '--range', action='store', default='',
                         help='Range to search in...', dest='search_range')
-    parser.add_option('-x', '--raw', action='store_true', default=False,
+    parser.add_argument('-x', '--raw', action='store_true', default=False,
                         help='Get the raw text of verses by reference.',
                         dest='raw')
-    parser.add_option('-l', '--lookup', action='store', default='',
+    parser.add_argument('-l', '--lookup', action='store', default='',
                         help='Lookup a comma seperated list of verse references.',
                         dest='verse_reference')
-    parser.add_option('-d', '--daily', action='store',
+    parser.add_argument('-d', '--daily', action='store',
                       default='', help='Lookup the devotional in \
                             Bagsters Daily light.', dest='day')
-    parser.add_option('', '--lookup-strongs', action='store', default='',
+    parser.add_argument('--lookup-strongs', action='store', default='',
                         help="A comma seperated list of Strong's Numbers to lookup.", dest='numbers')
-    parser.add_option('', '--lookup-morphology', action='store', default='',
+    parser.add_argument('--lookup-morphology', action='store', default='',
                         help='A comma seperated list of Morphological Tags to lookup.', dest='tags')
-    parser.add_option('', '--lookup-webster', action='store', default='',
+    parser.add_argument('--lookup-webster', action='store', default='',
                         help='A comma seperated list of words to lookup in websters dictionary.', dest='words')
-    parser.add_option('', '--lookup-kjvd', action='store', default='',
+    parser.add_argument('--lookup-kjvd', action='store', default='',
                         help='A comma seperated list of words to lookup in kjv dictionary.', dest='kjv_words')
-    parser.add_option('', '--one-line', action='store_true', default=False,
+    parser.add_argument('--one-line', action='store_true', default=False,
                         help='Print all the verses on one line.', 
                         dest='one_line')
-    parser.add_option('', '--context', action='store', default=0, type="int",
+    parser.add_argument('--context', action='store', default=0, type=int,
                         help='The number of verses before and after the match\
                               to include in the output.',
                         dest='context')
-    parser.add_option('-a', '--added', action='store_false', default=True,
+    parser.add_argument('-a', '--added', action='store_false', default=True,
                         help="Show/search the added text (italics) default is \
                                 True.",
                               dest='search_added')
-    parser.add_option('', '--notes', action='store_true', default=False,
+    parser.add_argument('--notes', action='store_true', default=False,
                         help="Show study notes.", dest='show_notes')
-    parser.add_option('-n', '--numbers', action='store_true', default=False,
+    parser.add_argument('-n', '--numbers', action='store_true', default=False,
                         help="Include the Strong's numbers in the verse \
                               output.", dest='show_numbers')
-    parser.add_option('-t', '--tags', action='store_true', default=False,
+    parser.add_argument('-t', '--tags', action='store_true', default=False,
                         help="Include the Morphological tags in the verse \
                               output.", dest='show_tags')
-    parser.add_option('-r', '--verse_ref', action='store_true', default=False,
+    parser.add_argument('-r', '--verse_ref', action='store_true', default=False,
                         help='Show only a sorted list of references', 
                         dest='list_only')
-    parser.add_option('-c', '--color_output', action='store', default=3,
+    parser.add_argument('-c', '--color_output', action='store', default=3,
                         help='How much to color. (-1 == nothing, 0 == verse references, 1 == italics, 2 == attributes, 3 == highlight)',
                         dest='color_level')
-    parser.add_option('-q', '--quiet', action='store_true', default=False,
+    parser.add_argument('-q', '--quiet', action='store_true', default=False,
                         help='Only print the number of verses found.', 
                         dest='quiet')
-    parser.add_option('-v', '--verbose', action='store', default=1,
+    parser.add_argument('-v', '--verbose', action='store', default=1,
                         help='Print more information.', 
                         dest='verbose_level')
+    parser.add_argument(dest='search_terms', nargs='*')
 
-    options, args = parser.parse_args()
+    args = parser.parse_args()
     try:
-        VERBOSE_LEVEL = int(options.verbose_level)
+        VERBOSE_LEVEL = int(args.verbose_level)
     except Exception as err:
-        print("Invalid verbose level '%s': %s" % (options.verbose_level, err),
+        print("Invalid verbose level '%s': %s" % (args.verbose_level, err),
               file=sys.stderr)
         VERBOSE_LEVEL = 1
     try:
-        COLOR_LEVEL = int(options.color_level)
+        COLOR_LEVEL = int(args.color_level)
     except Exception as err:
-        print("Invalid color level '%s': %s" % (options.verbose_level, err),
+        print("Invalid color level '%s': %s" % (args.verbose_level, err),
               file=sys.stderr)
         COLOR_LEVEL = 3
 
@@ -4673,5 +4676,5 @@ if __name__ == '__main__':
         sys.stderr.flush()
 
     #with StdoutRedirect(stdout_to_stderr):
-    main(args, **options.__dict__)
+    main(args.search_terms, **args.__dict__)
     re.purge()
