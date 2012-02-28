@@ -188,6 +188,57 @@ def screen_size():
         except:
             return (25, 80)
 
+def render_raw2(verse_text, strongs=False, morph=False):
+    """ Render raw verse text.
+
+    """
+
+    strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
+    morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
+    test_regx = re.compile(r'([^<]*)<(?P<tag>seg|q|w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
+    divname_regx = re.compile(r'<(?:divineName)>([^<]*?)([\'s]*)</(?:divineName)>', re.I)
+    div_upper = lambda m: m.group(1).upper() + m.group(2)
+    marker_regx = re.compile(r'.*marker="(.)".*', re.I)
+    info_print(verse_text, tag=4)
+
+    def recurse_tag(text):
+        """ Recursively parse raw verse text using regular expressions, and
+        returns the correctly formatted text.
+
+        """
+
+        v_text = ''
+        for match in test_regx.finditer(text):
+            opt, tag_name, tag_attr, tag_text, punct = match.groups()
+            strongs_str = ''
+            morph_str = ''
+            italic_str = '<i>%s</i>' if 'added' in tag_attr.lower() else '%s'
+            if 'note' in tag_name.lower() or 'study' in tag_attr.lower():
+                note_str = ' <n>%s</n>' 
+            else:
+                note_str = '%s'
+            if strongs and strong_regx.search(tag_attr):
+                strongs_list = strong_regx.findall(tag_attr)
+                strongs_str = ' <%s>' % '> <'.join(strongs_list)
+            if  morph and morph_regx.search(tag_attr):
+                morph_list = morph_regx.findall(tag_attr)
+                morph_str = ' {%s}' % '} {'.join(morph_list)
+
+            if match.re.search(tag_text):
+                temp_text = recurse_tag(tag_text) + strongs_str + morph_str
+                v_text += note_str % italic_str % (temp_text)
+            else:
+                info_print((opt, tag_name, tag_attr, tag_text, punct), tag=4)
+                opt = marker_regx.sub('<p>\\1</p> ', opt)
+                tag_text = divname_regx.sub(div_upper, tag_text)
+                tag_text = note_str % italic_str % tag_text
+                v_text += opt + tag_text + strongs_str + morph_str
+            v_text += punct
+
+        return v_text
+
+    return recurse_tag(verse_text)
+
 def render_raw(verse_text, strongs=False, morph=False):
     """ Render raw verse text.
 
@@ -195,11 +246,47 @@ def render_raw(verse_text, strongs=False, morph=False):
 
     strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
     morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
-    test_regx = re.compile(r'([^<]*)<(?P<tag>w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
+    test_regx = re.compile(r'([^<]*)<(?P<tag>q|w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
     divname_regx = re.compile(r'(?:<seg>)?<(?:divineName)>+([^<]*?)([\'s]*)</(?:divineName)>(?:</seg>)?', re.I)
+    xadded_regx = re.compile(r'<seg subType="x-added"[^>]*>([^<]*)</seg>', re.I)
+    div_upper = lambda m: m.group(1).upper() + m.group(2)
     marker_regx = re.compile(r'.*marker="(.)".*', re.I)
     v_text = ''
+    info_print(verse_text, tag=4)
+
     for match in test_regx.finditer(verse_text):
+        opt, tag_name, tag_attr, tag_text, punct = match.groups()
+        italic_str = '%s'
+        if match.re.search(tag_text):
+            if 'added' in tag_attr.lower():
+                italic_str = '<i>%s</i>' + punct
+                punct = ''
+            match_list = match.re.findall(tag_text + punct)
+        else:
+            match_list = [match.groups()]
+        temp_text = ''
+        for opt, tag_name, tag_attr, tag_text, punct in match_list:
+            info_print((opt, tag_name, tag_attr, tag_text, punct), tag=4)
+            tag_text = divname_regx.sub(div_upper, tag_text)
+            tag_text = xadded_regx.sub('<i>\\1</i>', tag_text)
+            if 'marker' in opt.lower():
+                temp_text += '<p>%s</p> ' % marker_regx.sub('\\1', opt)
+                opt = ''
+            if 'note' in tag_name.lower() or 'study' in tag_attr.lower():
+                temp_text += ' <n>%s</n>' % tag_text
+                tag_text = ''
+            temp_italic = '<i>%s</i>' if 'added' in tag_attr.lower() else '%s'
+            temp_text += temp_italic % (opt + tag_text)
+            if tag_name.strip().lower() in ['transchange', 'w', 'seg']:
+                if strong_regx.search(tag_attr) and strongs:
+                    temp_text += ' <%s>' % '> <'.join(strong_regx.findall(tag_attr))
+                if morph_regx.search(tag_attr) and morph:
+                    temp_text += ' {%s}' % '} {'.join(morph_regx.findall(tag_attr))
+            temp_text += punct
+
+        v_text += italic_str % temp_text
+
+        continue
         opt, tag_name, tag_attr, tag_text, punct = match.groups()
         tag_text = divname_regx.sub(lambda m: m.group(1).upper() + m.group(2), tag_text)
         if 'marker' in opt.lower():
@@ -210,7 +297,7 @@ def render_raw(verse_text, strongs=False, morph=False):
             v_text += ' <n>%s</n>' % tag_text
         if match.re.search(tag_text):
             for i in match.re.finditer(tag_text):
-                info_print('%s' % i.groups(), tag=4)
+                info_print(i.groups(), tag=4)
                 o, t_n, t_a, t_t, p = i.groups()
                 if t_n.strip().lower() in ['transchange', 'w']:
                     v_text += o + t_t
@@ -2646,6 +2733,9 @@ class Search(object):
             # Only search through the supplied range.
             ref_set.intersection_update(range_str)
 
+        if not ref_set:
+            exit()
+
         ref_iter = iter(sorted(ref_set, key=sort_key))
         # Get an iterator that will return tuples
         # (verse_reference, verse_text).
@@ -2653,101 +2743,119 @@ class Search(object):
                                    morph=morph, render='raw',
                                    module=self._module_name)
 
-        # This will skip words.
-        not_words_str = r'\b\w+\b'
-        # This will skip Strong's Numbers.
-        not_strongs_str = r'<[^>]*>'
-        # This wil skip Morphological Tags.
-        not_morph_str = r'\{[^\}]*\}'
-        # This will skip all punctuation.  Skipping ()'s is a problem for
-        # searching Morphological Tags, but it is necessary for the
-        # parenthesized words.  May break highlighting.
-        not_punct_str = r'[\s,\?\!\.;:\\/_\(\)\[\]"\'-]'
-        max_ref_len = len(max(ref_set, key=len))
         found_set = set()
         strong_regx = re.compile(r'strong:([GH]\d+)', re.I)
         morph_regx = re.compile(r'(?:Morph|robinson):([\w-]*)', re.I)
-        test_regx = re.compile(r'<([^>]*)>([^<]*)')
-        #test_regx = re.compile(r'<([^>]*)([^<]*)<([^/]*)/[^>]*>')
-        #test_regx = re.compile(r'<(?P<tag>w|transChange)([^>]*)([\w\W]*?)>([^<]*)</(?P=tag)>([^<]*)', re.I)
-        test_regx = re.compile(r'([^<]*)<(?P<tag>w|transChange|note)([^>]*)>([\w\W]*?)</(?P=tag)>([^<]*)', re.I)
+        #tag_regx = re.compile(r'''
+                #([^<]*)                             # Before tag.
+                #<(?P<tag>q|w|transChange|note)      # Tag name.
+                #([^>]*)>                            # Tag attributes.
+                #([\w\W]*?)</(?P=tag)>               # Tag text and end.
+                #([^<]*)                             # Between tags. 
+                #''', re.I|re.X)
+        tag_regx = re.compile(r'''
+                ([^<]*)                             # Before tag.
+                <(?P<tag>seg|q|w|transChange|note)  # Tag name.
+                ([^>]*)>                            # Tag attributes.
+                ([\w\W]*?)</(?P=tag)>               # Tag text and end.
+                ([^<]*)                             # Between tags. 
+                ''', re.I|re.X)
         divname_regx = re.compile(r'(?:<seg>)?<(?:divineName)>+([^<]*?)([\'s]*)</(?:divineName)>(?:</seg>)?', re.I)
+        xadded_regx = re.compile(r'<seg subType="x-added"[^>]*>([^<]*)</seg>', re.I)
+        div_upper = lambda m: m.group(1).upper() + m.group(2)
         marker_regx = re.compile(r'.*marker="(.)".*', re.I)
         term_dict = defaultdict(list)
-        len_attrs = 0
+        len_attrs = 10
+        def recurse_tag(text, term, verse_ref, ctag_attr=''):
+            """ Recursively parse raw verse text using regular expressions, and
+            returns the correctly formatted text.
+
+            """
+
+            term_list = []
+            for match in tag_regx.finditer(text):
+                value_list = attr_list = []
+                strong_list = []
+                morph_list = []
+                opt, tag_name, tag_attr, tag_text, punct = match.groups()
+                if match.re.search(tag_text):
+                    term_list.extend(recurse_tag(tag_text, term, verse_ref, tag_attr))
+                else:
+                    info_print((opt, tag_name, tag_attr, tag_text, punct), tag=4)
+                    if marker_regx.match(opt):
+                        opt = ''
+                    tag_text = opt + divname_regx.sub(div_upper, tag_text)
+                    if term.upper() in tag_attr or term.upper() in ctag_attr:
+                        if strong_regx.match(term):
+                            strong_list = [term.upper()]
+                        elif morph_regx.match(term):
+                            morph_list = [term.upper()]
+                    elif term_regx.search(tag_text):
+                        if strongs or not morph:
+                            strong_list.extend(strong_regx.findall(tag_attr))
+                            strong_list.extend(strong_regx.findall(ctag_attr))
+                        if morph:
+                            morph_list.extend(morph_regx.findall(tag_attr))
+                            morph_list.extend(morph_regx.findall(ctag_attr))
+                        for lst in (strong_list, morph_list):
+                            if lst:
+                                a_str = '%s"' % '", "'.join(lst)
+                                value_list = [a_str, tag_text.strip()]
+                                term_list.append({verse_ref:value_list})
+            return term_list
+
         for verse_ref, verse_text in verse_iter:
+            #print(render_raw(verse_text, strongs, morph))
+            #print(render_raw2(verse_text, strongs, morph))
+            #continue
             for term in search_terms.split():
                 v_text = ''
-                word_dict = defaultdict(list)
-                print(verse_text)
-                cur_tag = ''
-                print()
-                for match in test_regx.finditer(verse_text):
+                info_print('%s\n' % verse_text, tag=4)
+                term = term.replace('<', '').replace('>', '')
+                term = term.replace('{', '').replace('}', '')
+                term_regx = re.compile('\\b%s\\b' % term, re.I)
+                value_list = recurse_tag(verse_text, term, verse_ref)
+                if value_list:
+                    for i in value_list:
+                        len_attrs = max(len(i[verse_ref][0]), len_attrs)
+                    term_dict[term].extend(value_list)
+                continue
+                for match in tag_regx.finditer(verse_text):
                     opt, tag_name, tag_attr, tag_text, punct = match.groups()
-                    tag_text = divname_regx.sub(lambda m: m.group(1).upper() + m.group(2), tag_text)
+                    tag_text = xadded_regx.sub('\\1', tag_text)
                     if match.re.search(tag_text):
-                        for i in match.re.finditer(tag_text):
-                            print(i.groups())
-                            o, t_n, t_a, t_t, p = i.groups()
-                            if t_n.strip().lower() in ['transchange', 'w']:
-                                v_text += o + t_t
-                            v_text += p
+                        match_list = match.re.findall(tag_text + punct)
                     else:
-                        if tag_name.strip().lower() in ['transchange', 'w']:
-                            v_text += tag_text
-                    v_text += punct
-                    print(opt, tag_name, tag_attr, tag_text, punct)
-                    continue
-                    print(match.groups())
-                    if match.re.search(match.group(3)):
-                        t = match.re
-                        for m in t.finditer(match.group(3)):
-                            print(m.groups())
-                    continue
-                    attr, words = match.groups()
-                    if '/' not in attr and not cur_tag:
-                        cur_tag = attr.split()[0]
-                    else:
-                        cur_tag = ''
-                    print(cur_tag)
-                    print(attr,':', words)
-                    #continue
-                    #attr, words, punct  = match.groups()
-                    #words = divname_regx.sub(lambda m: m.groups()[0].upper(), words).strip()
-                    #print('%s\t : %s\t : %s' % (attr, words, punct))
-                    #continue
-                    term = term.replace('<', '').replace('>', '')
-                    term = term.replace('{', '').replace('}', '')
-                    if term.upper() in attr:
-                        term_dict[term].append({verse_ref:words.strip()})
-                    elif ' %s ' % term.lower() in ' %s ' %  words.lower():
-                        attr_list = []
-                        if strongs or not morph:
-                            for s_match in strong_regx.finditer(attr):
-                                attr_list.append(s_match.groups()[0].strip())
-                        if morph:
-                            for m_match in morph_regx.finditer(attr):
-                                attr_list.append(m_match.groups()[0].strip())
-                        if len(attr_list):
-                            len_attrs = max(len('%s"' % '", "'.join(attr_list)), len_attrs)
-                            term_dict[term].append({verse_ref:[attr_list, words.strip()]})
-                    ts = ''
-                    for s_match in strong_regx.finditer(attr):
-                        ts += '<%s>' % s_match.groups()[0]
-                    for m_match in morph_regx.finditer(attr):
-                        ts += '<%s>' % m_match.groups()[0]
-                    #print(dict([i.split('=') for i in attr.split()]))
-                    v_text += words + ts #+ punct
-                print(v_text)
+                        match_list = [match.groups()]
+                    for tag_tup in match_list:
+                        opt, tag_name, tag_attr, tag_text, punct = tag_tup
+                        info_print(tag_tup, tag=4)
+                        value_list = []
+                        strongs_list = []
+                        morph_list = []
+                        tag_text = divname_regx.sub(div_upper, tag_text)
+                        v_text += marker_regx.sub('\\1 ', opt) + tag_text + punct
+                        if term.upper() in tag_attr:
+                            attr_list = [term.upper()]
+                        elif term_regx.search(tag_text):
+                            if strongs or not morph:
+                                strongs_list = strong_regx.findall(tag_attr)
+                            if morph:
+                                morph_list = morph_regx.findall(tag_attr)
+
+                            for lst in (strongs_list, morph_list):
+                                if lst:
+                                    attr_str = '%s"' % '", "'.join(lst)
+                                    value_list = [attr_str, tag_text.strip()]
+                                    term_dict[term].append({verse_ref:value_list})
+                                    len_attrs = max(len(attr_str), len_attrs)
+                info_print(v_text, tag=4)
         max_len_ref = len(max(ref_set, key=len))
         for term, lst in term_dict.items():
             print('%s:' % term)
             for dic in lst:
-                ref, s_l = list(dic.items())[0]
-                if isinstance(s_l, list):
-                    attrs, s = s_l
-                    attr_s = '%s"' % '", "'.join(attrs)
-                    s_l = '{1:{0}}: "{2}'.format(len_attrs, attr_s, s)
+                ref, (attrs, s) = list(dic.items())[0]
+                s_l = '{1:{0}}: "{2}'.format(len_attrs, attrs, s)
                 print('\t{0:{1}}: "{2}"'.format(ref, max_len_ref, s_l))
                 
 
