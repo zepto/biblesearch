@@ -952,7 +952,7 @@ def render_raw(verse_text, strongs=False, morph=False):
 
 def render_verses_with_italics(ref_list, wrap=True, strongs=False, 
                                morph=False, added=True, notes=False,
-                               highlight_func=None, *args):
+                               highlight_func=None, module='KJV', *args):
     """ Renders a the verse text at verse_ref with italics highlighted.  
     Returns a strong "verse_ref: verse_text"
         wrap            -   Whether to wrap the text.
@@ -1014,12 +1014,13 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     verse_iter = IndexedVerseTextIter(iter(ref_list), strongs, morph,
                                       italic_markers=(COLOR_LEVEL >= 1),
                                       added=added, paragraph=added,
-                                      notes=notes)
+                                      notes=notes, module=module)
     if VERBOSE_LEVEL == 20:
         verse_iter = VerseTextIter(iter(ref_list), strongs, morph,
-                                   markup=Sword.FMT_PLAIN, render='render_raw')
+                                   module=module, markup=Sword.FMT_PLAIN,
+                                   render='render_raw')
     if VERBOSE_LEVEL >= 30:
-        verse_iter = RawDict(iter(ref_list))
+        verse_iter = RawDict(iter(ref_list), module=module)
     for verse_ref, verse_text in verse_iter:
         if VERBOSE_LEVEL >= 30:
             len_longest_key = len(max(verse_text[1].keys(), key=len))
@@ -1446,11 +1447,16 @@ class VerseTextIter(object):
         xml_text = '''<?xml version="1.0"?>
         <root xmlns="%s">
         %s
-        </root>''' % ('verse', raw_text)
+        </root>'''
 
         # It works now we can parse the xml dom.
-        parsed_xml = parseString(xml_text)
-        parsed_str = self._parse_xml(parsed_xml, strongs, morph)
+        try:
+            parsed_xml = parseString(xml_text % ('verse', raw_text))
+            parsed_str = self._parse_xml(parsed_xml, strongs, morph)
+        except Exception as err:
+            print('Error %s while processing %s.\n' % (err, raw_text), 
+                  file=sys.stderr)
+            parsed_str = raw_text
         # Make all the spacing correct.
         fixed_str = self._fix_end_regx.sub('\\1', parsed_str)
         fixed_str = self._fix_space_regx.sub('\\1 ', fixed_str)
@@ -1654,8 +1660,14 @@ class RawDict(object):
         </root>''' % ('verse_text', raw_text)
 
         # It works now we can parse the xml dom.
-        parsed_xml = parseString(xml_text)
-        return self._raw_to_dict(parsed_xml, strongs, morph)
+        try:
+            parsed_xml = parseString(xml_text)
+            return self._raw_to_dict(parsed_xml, strongs, morph)
+        except Exception as err:
+            info_print('Error %s while processing %s.\n' % (err, raw_text),
+                       tag=31)
+            return raw_text, {'_verse_text':[raw_text], 
+                              '_words':[defaultdict(list)]}
 
 
 class IndexedVerseTextIter(object):
@@ -2961,7 +2973,7 @@ class Search(object):
             if '*' in search_terms:
                 ref_set = self._index_dict.from_partial(search_list,
                                                         case_sensitive,
-                                                        common_limit=500)
+                                                        common_limit=5000)
             else:
                 ref_set = self._index_dict.value_intersect(search_list, 
                                                            case_sensitive)
@@ -3133,7 +3145,7 @@ class Search(object):
                 # puctuation are in the verses?
                 clean_verse_text = self._clean_text(verse_text)
                 if search_regex.search(clean_verse_text):
-                    found_verses.add(verse_ref)
+                    found_set.add(verse_ref)
         
         info_print("...Done.", tag=tag)
 
@@ -3638,7 +3650,7 @@ class SearchCmd(Cmd):
 
     """
 
-    def __init__(self):
+    def __init__(self, module='KJV'):
         """ Initialize the settings.
 
         """
@@ -3690,7 +3702,7 @@ class SearchCmd(Cmd):
         self._quoted_regex = re.compile('''((?P<quote>'|").*?(?P=quote)|[^'"]*)''')
 
         # Perform the specified search.
-        self._search = Search()
+        self._search = Search(module=module)
         self._results = set()
         self._search_list = []
         self._highlight_list = []
@@ -3711,6 +3723,7 @@ class SearchCmd(Cmd):
                 'added': True,
                 'range': '',
                 'extras': (),
+                'module': module,
                 }
         self._search_types = ['mixed', 'mixed_phrase', 'multiword', 'anyword',
                               'combined', 'partial_word', 'ordered_multiword',
@@ -3924,6 +3937,7 @@ class SearchCmd(Cmd):
         search_range = self._setting_dict['range']
         case_sensitive = self._setting_dict['case_sensitive']
         search_added = self._setting_dict['added']
+        module_name = self._setting_dict['module']
         highlight_list = self._highlight_list
         kwargs = self._setting_dict
         results = self._results
@@ -3997,7 +4011,7 @@ class SearchCmd(Cmd):
                                                search_added,
                                                show_notes,
                                                highlight_search_terms,
-                                               regx_list, flags)
+                                               module_name, regx_list, flags)
         if one_line:
             # Print it all on one line.
             print('  '.join(verse_gen))
@@ -4380,10 +4394,11 @@ def main(arg_list, **kwargs):
     """
 
     info_print("\nProcessing arguments...\n", tag=2)
+    module_name = kwargs['module_name']
 
     # Build the index.
     if kwargs['build_index']:
-        indexer = IndexBible()
+        indexer = IndexBible(module=module_name)
         indexer.write_index()
         exit()
 
@@ -4410,7 +4425,7 @@ def main(arg_list, **kwargs):
     highlight_list = []
 
     if kwargs['raw']:
-        raw_lookup = Lookup()
+        raw_lookup = Lookup(module_name=module_name)
         strongs = 'On' if kwargs['show_numbers'] else 'Off'
         morph = 'On' if kwargs['show_tags'] else 'Off'
         raw_lookup._library.setGlobalOption("Strong's Numbers", strongs)
@@ -4473,7 +4488,7 @@ def main(arg_list, **kwargs):
             import atexit
             atexit.register(readline.write_history_file, histfile)
             del histfile
-            cmd_line = SearchCmd()
+            cmd_line = SearchCmd(module=module_name)
             try:
                 cmd_line.cmdloop()
             except:
@@ -4482,7 +4497,7 @@ def main(arg_list, **kwargs):
             exit()
 
         # Perform the specified search.
-        search = Search()
+        search = Search(module=module_name)
 
         extras = ()
 
@@ -4577,7 +4592,7 @@ def main(arg_list, **kwargs):
                                                search_added,
                                                kwargs['show_notes'],
                                                highlight_search_terms,
-                                               regx_list, flags)
+                                               module_name, regx_list, flags)
         if kwargs['one_line']:
             # Print it all on one line.
             print('  '.join(verse_gen))
@@ -4588,11 +4603,14 @@ def main(arg_list, **kwargs):
 
 if __name__ == '__main__':
     parser = ArgumentParser(description="Bible search.")
+    parser.add_argument('-m', '--module', action='store', default='KJV',
+                        help='Module to search/index.',
+                        dest='module_name')
     parser.add_argument('-i', '--index', action='store_true', default=False,
                         help='(Re-)build the search index.',
                         dest='build_index')
     parser.add_argument('-s', '--search-type', action='store', default='mixed',
-            help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, mixed_phrase, ordered_multiword, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: phrase)',
+            help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, mixed_phrase, ordered_multiword, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: mixed)',
             dest='search_type')
     parser.add_argument('-S', '--strongs', action='store_true', default=False,
                         help='Search for strongs numbers. (Ignored in mixed search)', dest='search_strongs')
