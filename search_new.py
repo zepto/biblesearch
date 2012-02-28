@@ -1750,14 +1750,15 @@ class Search(object):
         @wraps(func)
         def wrapper(self, search_terms, strongs=False, morph=False,
                     case_sensitive=False, range_str=''):
-            """ Process the search terms according to the wrapped functions
-            requirements, then apply the range, if given, to the returned set
-            of verses.
+            """ Gets a regular expression from the wrapped function, then
+            builds a set of verse references to search, finally it calls the
+            searching function with the regular expression and the verse
+            reference iterator, and returns the resulting set of references.
 
             """
 
-            #func(self, search_terms, strongs=False, morph=False,
-                 #case_sensitive=False, range_str='')
+            search_regx = func(self, search_terms, strongs, morph,
+                               case_sensitive, range_str)
 
             # First make sure we are only searching verses that have all the
             # search terms in them.
@@ -1774,40 +1775,17 @@ class Search(object):
             # Sort the list so it may be a little faster.  Only needed if we're
             # using the sword module to look them up.
             ref_iter = self._sorted_iter(ref_set)
-            
-            if func.__name__ == 'phrase_search':
-                # Make all the terms the same case if case doesn't matter.
-                flags = re.I if not case_sensitive else 0
 
-                if strongs:
-                    # Match strongs phrases.
-                    search_reg_str = search_terms.replace(' ', r'[^<]*')
-                elif morph:
-                    # Match morphological phrases.
-                    search_reg_str = search_terms.replace(' ', r'[^\{]*')
-                else:
-                    # Match word phrases
-                    search_reg_str = '\\b%s\\b' % search_terms.replace(' ', 
-                            r'\b(<[^>]*>|\{[^\}]*\}|\W)*\b')
-                
-                # Make a regular expression from the search terms.
-                search_regx = re.compile(search_reg_str, flags)
-            else:
-                # Disable Strong's and Morphological if only words are used.
-                strongs = bool(self._strongs_regx.search(search_terms))
-                morph = bool(self._morph_regx.search(search_terms))
+            # Disable Strong's and Morphological if only words are used.
+            strongs = bool(self._strongs_regx.search(search_terms))
+            morph = bool(self._morph_regx.search(search_terms))
 
-                # Check if the regular expression should be sloppy.
-                sloppy = (func.__name__ == 'ordered_multiword_search')
-                search_regx = self.search_terms_to_regex(search_terms,
-                                                         case_sensitive,
-                                                         sloppy=sloppy)
             return self.find_from_regex(ref_iter, search_regx, strongs, morph)
 
         return wrapper
 
     @_process_search
-    #@_process_phrase
+    @_process_phrase
     def ordered_multiword_search(self, search_terms, strongs=False,
                                  morph=False, case_sensitive=False,
                                  range_str=''):
@@ -1826,29 +1804,11 @@ class Search(object):
 
         info_print("Searching for verses with these words in order '%s'..." % search_terms)
 
-        # First make sure we are only searching verses that have all the
-        # search terms in them.
-        ref_set = self._index_dict.value_intersect(search_terms.split(), 
-                                                   case_sensitive)
-        if range_str:
-            # Only search through the supplied range.
-            ref_set.intersection_update(range_str)
-
-        # No need to search for a single word phrase.
-        if len(search_terms.split()) == 1:
-            return ref_set
-
-        # Sort the list so it may be a little faster.  Only needed if we're
-        # using the sword module to look them up.
-        ref_iter = self._sorted_iter(ref_set)
-        
-        search_regx = self.search_terms_to_regex(search_terms, case_sensitive,
-                                                 sloppy=True)
-
-        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+        return self.search_terms_to_regex(search_terms, case_sensitive,
+                                          sloppy=True)
 
     @_process_search
-    #@_process_phrase
+    @_process_phrase
     def phrase_search(self, search_terms, strongs=False, morph=False, 
                       case_sensitive=False, range_str=''):
         """ phrase_search(self, search_terms, strongs=False, morph=False,
@@ -1865,22 +1825,6 @@ class Search(object):
 
         info_print("Searching for verses with this phrase '%s'..." % search_terms)
 
-        # First make sure we are only searching verses that have all the
-        # search terms in them.
-        ref_set = self._index_dict.value_intersect(search_terms.split(), 
-                                                   case_sensitive)
-        if range_str:
-            # Only search through the supplied range.
-            ref_set.intersection_update(range_str)
-
-        # No need to search for a single word phrase.
-        if len(search_terms.split()) == 1:
-            return ref_set
-
-        # Sort the list so it may be a little faster.  Only needed if we're
-        # using the sword module to look them up.
-        ref_iter = self._sorted_iter(ref_set)
-
         # Make all the terms the same case if case doesn't matter.
         flags = re.I if not case_sensitive else 0
 
@@ -1896,12 +1840,10 @@ class Search(object):
                     r'\b(<[^>]*>|\{[^\}]*\}|\W)*\b')
         
         # Make a regular expression from the search terms.
-        search_regx = re.compile(search_reg_str, flags)
-
-        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+        return re.compile(search_reg_str, flags)
 
     @_process_search
-    #@_process_phrase
+    @_process_phrase
     def mixed_phrase_search(self, search_terms, strongs=False, morph=False, 
                       case_sensitive=False, range_str=''):
         """ mixed_phrase_search(self, search_terms, strongs=False, morph=False,
@@ -1918,30 +1860,8 @@ class Search(object):
 
         info_print("Searching for verses with this phrase '%s'..." % search_terms)
 
-        # First make sure we are only searching verses that have all the
-        # search terms in them.
-        ref_set = self._index_dict.value_intersect(search_terms.split(), 
-                                                   case_sensitive)
-        if range_str:
-            # Only search through the supplied range.
-            ref_set.intersection_update(range_str)
-
-        # No need to search for a single word phrase.
-        if len(search_terms.split()) == 1:
-            return ref_set
-
-        # Sort the list so it may be a little faster.  Only needed if we're
-        # using the sword module to look them up.
-        ref_iter = self._sorted_iter(ref_set)
-
-        # Disable Strong's and Morphological if only words are used.
-        strongs = bool(self._strongs_regx.search(search_terms))
-        morph = bool(self._morph_regx.search(search_terms))
-
         # Make a regular expression from the search terms.
-        search_regx = self.search_terms_to_regex(search_terms, case_sensitive)
-
-        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+        return self.search_terms_to_regex(search_terms, case_sensitive)
 
     @_process_search
     def regex_search(self, search_terms, strongs=False, morph=False,
@@ -1973,13 +1893,16 @@ class Search(object):
 
         if range_str:
             # Only search through the supplied range.
-            v_iter = self._sorted_iter(range_str)
+            ref_iter = self._sorted_iter(range_str)
         else:
             # Search the entire Bible.
-            v_iter = VerseIter('Genesis 1:1')
+            ref_iter = VerseIter('Genesis 1:1')
+
+        return self.find_from_regex(ref_iter, search_regx, strongs, morph, show_info=True, try_clean=True)
 
         # The iter returns a tuple (verse_ref, verse_text).
-        verse_iter = IndexedVerseTextIter(v_iter, strongs=strongs, morph=morph,
+        verse_iter = IndexedVerseTextIter(ref_iter, strongs=strongs,
+                                          morph=morph,
                                           module=self._module_name)
 
         # The set that will be returned with all the references whose text
@@ -2004,7 +1927,7 @@ class Search(object):
         return found_verses
 
     def find_from_regex(self, ref_iter, search_regex, strongs=False,
-                        morph=False):
+                        morph=False, show_info=False, try_clean=False):
         """ Iterates through all the verses in the ref iter iterator and
         returns a list of verses whose text matches search_regx.
 
@@ -2018,10 +1941,24 @@ class Search(object):
 
         found_set = set()
         for verse_ref, verse_text in verse_iter:
+            if show_info:
+                # Take this out to gain a little speed.
+                info_print('\033[%dD\033[KSearching...%s' % \
+                           (len(verse_ref) + 20, verse_ref), end='')
+
             # Search for matches in the verse text.
             if search_regex.search(verse_text):
                 found_set.add(verse_ref)
+            elif try_clean and not strongs and not morph:
+                # Should we do this or should we trust the user knows what
+                # puctuation are in the verses?
+                clean_verse_text = self._clean_text(verse_text)
+                if search_regex.search(clean_verse_text):
+                    found_verses.add(verse_ref)
         
+        if show_info:
+            info_print("...Done.")
+
         return found_set
 
     def mixed_search(self, search_terms, strongs=False, morph=False, 
@@ -2051,9 +1988,6 @@ class Search(object):
                 '^' : xor_set.symmetric_difference_update,
                 }
 
-        # Try and catch regular expressions.
-        regex_regx = re.compile(r'[\|\$\\\[\]\{\}]')
-
         for term in search_terms:
             if term[0] in '!+^|':
                 # Set the correct combining function, and cleanup the item.
@@ -2075,8 +2009,9 @@ class Search(object):
                     search_func = self.ordered_multiword_search
                 else:
                     search_func = self.mixed_phrase_search
-            elif regex_regx.match(term):
+            elif term.startswith('*'):
                 # Allow regular expression searching.
+                term = term[1:]
                 search_func = self.regex_search
             else:
                 # A single word should be multi-word.
