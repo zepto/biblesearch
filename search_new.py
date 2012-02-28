@@ -880,15 +880,6 @@ class IndexedVerseTextIter(object):
 
         """
 
-        #self._clean_morph_regex = re.compile(r' \{([\w-]+)\}')
-        #self._clean_strongs_regex = re.compile(r' <([GH]\d+)>')
-        #self._clean_italic_regex = re.compile(r'(<i>\s?|\s?</i>)')
-        #self._clean_marker_regex = re.compile(r'(<p>\s?|\s?</p>)')
-        #self._clean_note_regex = re.compile(r'(<n>\s?|\s?</n>)')
-        #self._remove_added_regex = re.compile(r'\s?<i>\s?(.*?)\s?</i>', re.S)
-        #self._remove_marker_regex = re.compile(r'\s?<p>\s?(.*?)\s?</p>', re.S)
-        self._notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
-
         reg_list = []
         if not strongs:
             reg_list.append(r' <([GH]\d+)>')
@@ -905,17 +896,12 @@ class IndexedVerseTextIter(object):
         reg_str = r'(?:%s)' % r'|'.join(reg_list)
         self._clean_regex = re.compile(reg_str, re.S)
 
+        self._notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
         self._notes_str = ' (Notes: \\1)' if notes else ''
 
         self._index_dict = IndexDict('%s' % module, path)
 
         self._ref_iter = reference_iter
-        self._strongs = strongs
-        self._morph = morph
-        self._keep_added = added
-        self._italic_markers = italic_markers
-        self._keep_paragraph = paragraph
-        self._keep_notes = notes
 
     def next(self):
         """ Returns the next verse reference and text.
@@ -952,24 +938,7 @@ class IndexedVerseTextIter(object):
 
         verse_text = self._index_dict[verse_ref]
         verse_text = self._clean_regex.sub('', verse_text)
-        #if not self._strongs:
-            #verse_text = self._clean_strongs_regex.sub('', verse_text)
-        #if not self._morph:
-            #verse_text = self._clean_morph_regex.sub('', verse_text)
-        #if not self._italic_markers:
-            #verse_text = self._clean_italic_regex.sub('', verse_text)
-        #if not self._keep_added:
-            #verse_text = self._remove_added_regex.sub('', verse_text)
-        #if not self._keep_paragraph:
-            #verse_text = self._remove_marker_regex.sub('', verse_text)
-        #else:
-            #verse_text = self._clean_marker_regex.sub('', verse_text)
-
         verse_text = self._notes_regex.sub(self._notes_str, verse_text)
-        #if not self._keep_notes:
-            #verse_text = self._remove_notes_regex.sub('', verse_text)
-        #else:
-            #verse_text = self._remove_notes_regex.sub(' (Notes: \\1)', verse_text)
 
         return verse_text
 
