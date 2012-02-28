@@ -32,7 +32,7 @@ BibleSearch:  Can index and search the 'KJV' sword module using different types 
 
 """
 
-from sys import argv, exit, stdout
+from sys import argv, exit, stdout, stderr
 from optparse import OptionParser
 import json
 import re
@@ -54,7 +54,7 @@ class BibleBase(object):
         self._module_name = module
 
         self._non_alnum_regx = re.compile(r'\W')
-        self._fix_regx = re.compile(r'[ ]+')
+        self._fix_regx = re.compile(r'\s+')
         self._strongs_regx = re.compile(r'<([GH]\d*)>')
         self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
         self._word_regx = re.compile(r'\b(\w*)\b')
@@ -87,15 +87,19 @@ class BibleBase(object):
         self._show_strongs = self._library.getGlobalOption("Strong's Numbers")
         self._show_morph = self._library.getGlobalOption("Morphological Tags")
 
+        # Hopefully get the correct encoding to use.
         lang, enc = locale.getlocale()
         if not lang or lang == 'C':
             self._enc = 'ascii'
         else:
             self._enc = enc
 
+        # Why are these in this class?
         self._search_list = []
         self.case_sensitive = False
         self._split_highlight = False
+
+        self._provide_context = 0
 
     def verses(self, start, end='Revelation of John 22:21', strongs=False,
                morph=False):
@@ -221,27 +225,52 @@ class BibleBase(object):
     @_set_options
     def morph(self, value): pass
 
+    @property
+    def context(self):
+        """ The number of verses before and after to include in the output.
+
+        """
+
+        return self._provide_context
+
+    @context.setter
+    def context(self, value):
+        """ The number of verses before and after to include in the output.
+
+        """
+
+        self._provide_context = value
+
     def index(self, verse_ref): 
-        """ Returns the index of the verse in the bible.
+        """ The key function for the python sort method.
 
         """
 
         return Sword.VerseKey(verse_ref).Index()
 
-    def _verse_range(self, ref_str):
+    def _parse_range(self, ref_str):
         """ Returns a set of verse references in the ranges provided.
 
         """
 
+        # First split the string at all the spaces.
         ref_list = ref_str.split()
-        verse_set = set()
+        # Then join it with commas to make sure it is formated the way we
+        # want, then split it again at the commas to retrieve the seperate
+        # ranges or verses.
         ref_list = ','.join(ref_list).split(',')
-        for i in range(0, len(ref_list), 2):
-            range_list = sorted(ref_list[i:i + 2], key=self.index)
-            if len(range_list) != 1:
+        verse_set = set()
+        for ref_range in ref_list:
+            # Make sure the list is sorted in ascending order, so the range
+            # isn't broken.
+            range_list = sorted(ref_range.split('-'), key=self.index)
+            if len(range_list) == 2:
+                # Valid ranges are only between two verses.
                 verse_set.update(VerseRefIter(*range_list))
-            elif range_list[0]:
-                verse_set.add(range_list[0])
+            else:
+                # All others are added as seperate verses.
+                for ref in range_list:
+                    verse_set.add(Sword.VerseKey(ref).getText())
 
         return verse_set
 
@@ -251,13 +280,19 @@ class BibleBase(object):
         """
 
         if range_str:
-            return self._verse_range(range_str)
+            # Parse the range string.
+            range_set = self._parse_range(range_str)
 
+        # Let the sword library handle the parsing and arranging the provided
+        # verses.
         verse_list = Sword.VerseKey().ParseVerseList(' '.join(verse_ref_list))
-        return set(verse_list.getRangeText().split(';'))
+        # Combine and return a set of verses.
+        return range_set.union(verse_list.getRangeText().split(';'))
 
     def verse_text(self, verse_ref):
         """ Return the verse text of the provided reference.
+
+        ### DEPRECATED DO NOT USE ###
 
         """
 
@@ -271,10 +306,42 @@ class BibleBase(object):
 
         """
 
+        # Do we have to use two regular expressions to do this.
+        # Replace all non-alphanumeric characters with a space.
         temp_text = self._non_alnum_regx.sub(' ', text) 
+        # Replace one or more spaces with one space.
         clean_text = self._fix_regx.sub(' ', temp_text)
 
         return clean_text.strip()
+
+    def _add_context(self, ref_set, count=1):
+        """ Add count number of verses before and after each reference.
+
+        """
+
+        # Make a copy to work on.
+        clone_set = ref_set.copy()
+        for ref in ref_set:
+            # This seems like a realy hackish way to do this, but it seems to
+            # work.  First we make sure to not decrement back too far, then
+            # we increment past the original verse + count + 1 adding each
+            # reference as we go.
+            key = Sword.VerseKey(ref)
+            name = key.bookName(ord(key.Testament()), ord(key.Book()))
+            dec_num = count
+            # Only decrement to the first verse of the Bible.
+            if name == 'Genesis' and key.getChapter() == 1:
+                if key.getVerse() <= count:
+                    dec_num = abs(1 - key.getVerse())
+            for i in range(dec_num):
+                key.decrement()
+
+            # Increment count times past the original verse.
+            for i in range(count + dec_num + 1):
+                clone_set.add(key.getText())
+                key.increment()
+
+        return clone_set
 
     def verse_list(self, verse_ref_set, highlight=False):
         """ Return a list of formated and (if specified) highlighted
@@ -282,14 +349,23 @@ class BibleBase(object):
 
         """
 
+        # A kludge to make the search term highlighting sort of work.
         if highlight and self._search_list:
             if self.strongs or self.morph or self._split_highlight:
+                # Use an ored list of search terms so at least the
+                # indevidual items will be highlighted.  This catches more
+                # than the phrase so it doesn't look right.
                 search_string = '|'.join(self._search_list)
             else:
+                # Highlight the phrase.  Doesn't work if there were strange
+                # characters in the destination verse.
                 search_string = ' '.join(self._search_list)
+            # Catch each strongs/morph/word in the verse...Seems to work.
             reg_str = r'(\(|<|\b)(%s)(\b|>|\))' % search_string
+            # Everything is ascii.
             flags = re.A
             if not self.case_sensitive:
+                # Case insensitive.
                 flags |= re.I
             self._highlight_regx = re.compile(reg_str, flags)
 
@@ -298,22 +374,30 @@ class BibleBase(object):
         if not verse_ref_set:
             return []
 
-        verse_iter = VerseIter(verse_list_iter(verse_ref_set))
+        if self._provide_context > 0:
+            verse_ref_set = self._add_context(verse_ref_set, 
+                                              self._provide_context)
+
+        verse_iter = VerseIter(verse_list_iter(verse_ref_set), 
+                               module=self._module_name)
         verse_iter.morph = self.morph
         verse_iter.strongs = self.strongs
 
         for verse_ref, verse_text in verse_iter:
             if highlight:
                 verse_text = self._highlight(verse_text.strip())
+            # Convoluted way to do it, but first encode the string, then
+            # decode it again to put it in the string.  Do this or it will
+            # either have an error in non-utf8 environments or it will show
+            # ugly characters.  Hasn't been tested thoroughly.
             verse_text = verse_text.encode(self._enc, 'ignore')
-            verse_text = "%s%s%s: %s%s" % (self._ref_color, verse_ref.strip(), 
+            verse_text = "%s%s%s: %s" % (self._ref_color, verse_ref.strip(), 
                                            self._end_color,
-                                           verse_text.decode(self._enc, 'ignore'),
-                                           self._one_line)
+                                           verse_text.decode(self._enc, 'ignore'))
+            # Make a list of all the 'reference: text' strings.
             verse_list.append(verse_text)
         return verse_list
 
-    @_show_strongs_morph
     def print_verse_list(self, verse_ref_list, highlight=False):
         """ Print each verse in the list.
 
@@ -329,11 +413,13 @@ class BibleBase(object):
 
         """
 
+        # Highlight the search terms.  Why is this here?
         if self._highlight_regx:
             verse_text = self._highlight_regx.sub(self._word_highlight, 
                                                   verse_text)
 
-        verse_text = self._strongs_regx.sub(self._strongs_highlight, verse_text)
+        verse_text = self._strongs_regx.sub(self._strongs_highlight,
+                                            verse_text)
         verse_text = self._morph_regx.sub(self._morph_highlight, verse_text)
 
         return verse_text
@@ -347,13 +433,14 @@ def verse_list_iter(verse_ref_set):
     sort_key = lambda r: Sword.VerseKey(r).Index()
     return iter(sorted(verse_ref_set, key=sort_key))
 
+
 class VerseRefIter(object):
     """ Iterator of verse references.
 
     """
 
     def __init__(self, start, end='Revelation of John 22:21'):
-        """ Initialize.
+        """ Setup the start and end references of the range.
 
         """
 
@@ -395,6 +482,7 @@ class VerseRefIter(object):
 
         return self.__next__()
 
+
 class VerseIter(object):
     """ An iterable object for accessing verses in the Bible.  Maybe it will
     be easier maybe not.
@@ -427,11 +515,14 @@ class VerseIter(object):
         return self.__next__()
 
     def __next__(self):
-        """ Returns the next verse reference and text.
+        """ Returns a tuple of the next verse reference and text.
 
         """
 
+        # Retrieve the next reference.
         self._verse_ref = next(self._ref_iter)
+
+        # Set the verse and render the text.
         self._module.setKey(Sword.VerseKey(self._verse_ref))
         verse_text = self._module.RenderText()
 
@@ -488,6 +579,7 @@ class VerseIter(object):
     @_set_options
     def morph(self, value): pass
 
+
 class BookIter(VerseRefIter):
     """ Iterates over just one book.
 
@@ -505,6 +597,24 @@ class BookIter(VerseRefIter):
 
         super(BookIter, self).__init__(start, end)
 
+
+class ChapterIter(VerseRefIter):
+    """ Iterates over just one chapter.
+
+    """
+
+    def __init__(self, book='Genesis', chapter=1):
+        """ Setup iterator.
+
+        """
+
+        start = Sword.VerseKey('%s %s:1' % (book, chapter))
+        end = Sword.VerseKey(start.clone())
+        end.setVerse(end.getVerseMax())
+
+        super(ChapterIter, self).__init__(start, end)
+
+
 class IndexBible(object):
     """ Index the bible by Strong's Numbers, Morphological Tags, and words.
 
@@ -521,7 +631,7 @@ class IndexBible(object):
         self._cleanup_regx = re.compile(r' (<([GH]\d*)>|\(([A-Z\d-]*)\))')
 
         self._non_alnum_regx = re.compile(r'\W')
-        self._fix_regx = re.compile(r'[ ]+')
+        self._fix_regx = re.compile(r'\s+')
         self._strongs_regx = re.compile(r'<([GH]\d*)>')
         self._morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
 
@@ -535,8 +645,9 @@ class IndexBible(object):
 
         """
 
+        # Yield a list of all the book names in the bible.
         verse_key = Sword.VerseKey('Genesis 1:1')
-        for testament in range(1, 3):
+        for testament in [1, 2]:
             for book in range(1, verse_key.bookCount(testament) + 1):
                 yield(verse_key.bookName(testament, book))
                 
@@ -567,10 +678,17 @@ class IndexBible(object):
 
         """
 
+        # Remove all the morphological and strongs stuff.
         clean_text = self._cleanup_regx.sub('', verse_text)
+        # Remove any non-alpha-numeric stuff.
         clean_text = self._non_alnum_regx.sub(' ', clean_text) 
+        # Replace runs of one or more spaces with just a single space.
         clean_text = self._fix_regx.sub(' ', clean_text).strip()
 
+        # Remove the strongs and morphological stuff in such a way that
+        # split words are still split (i.e. where in, instead of wherein).
+        # So there are split versions and non-split versions just to be sure
+        # that the correct one is in there.
         verse_text = self._strongs_regx.sub('', verse_text)
         verse_text = self._morph_regx.sub('', verse_text)
 
@@ -579,6 +697,8 @@ class IndexBible(object):
         verse_text = verse_text.decode('ascii', 'ignore')
         verse_text = self._non_alnum_regx.sub(' ', verse_text) 
         verse_text = self._fix_regx.sub(' ', verse_text).strip()
+
+        # Save the case insesitive index.
         verse_set = set(verse_text.lower().split())
         verse_set.update(set(clean_text.lower().split()))
         
@@ -599,7 +719,7 @@ class IndexBible(object):
                 self._case_word_dict[word] = temp_list
 
     def _index_book(self, book_name="Genesis"):
-        """ Creates an indexes for strongs, morphology and words.
+        """ Creates indexes for strongs, morphology and words.
 
         """
 
@@ -618,7 +738,7 @@ class IndexBible(object):
 
     def build_index(self):
         """ Create index files of the bible for strongs numbers, 
-        morphological tags, and words.
+        morphological tags, and case (in)sensitive words.
 
         """
 
@@ -632,8 +752,12 @@ class IndexBible(object):
         """ Write all the index dictionaries to their respective files.  If
         Any of the dictionaries is empty, then build the index.
 
+        The indexes are just json-ed dictionaries.  The keys are the indexed
+        items and the values are the verse references that contain the key.
+
         """
 
+        # Build the index if it's not already built.
         if not self._word_dict or not self._strongs_dict or not \
                 self._morph_dict:
             self.build_index()
@@ -654,14 +778,13 @@ class IndexBible(object):
         with open('case_word.dump', 'w') as word_file:
             word_file.write(json.dumps(self._case_word_dict, indent=4))
 
+
 class BibleSearch(BibleBase):
     """ Search the bible for a phrase or any of the following:
         
         Strongs numbers
         Morphological tags
         Words
-
-        Also it has an indexing function to index the bible.
 
     """
 
@@ -672,11 +795,12 @@ class BibleSearch(BibleBase):
 
         super(BibleSearch, self).__init__(one_line, module)
 
+        # The range to search in.
         self._range_set = set()
 
-    def Search(self, search_list, strongs=False, morph=False, phrase=False,
+    def find(self, search_list, strongs=False, morph=False, phrase=False,
                search_any=False, regex=False, case=False, search_range=''):
-        """ Search(search_list, strongs=False, morph=False, phrase=False, 
+        """ find(search_list, strongs=False, morph=False, phrase=False, 
         search_any=False, regex=False, case=False, search_range=None) -> Search
         for the items in the provided search_list. 
                 
@@ -687,7 +811,7 @@ class BibleSearch(BibleBase):
                 search_any  -   Find all verses that have any of the search
                                 items or common words.
                 build_index -   Re-build the search index before searching.
-                default     -   Find all verses that have all the search
+                default     -   Find verses that have all the search
                                 terms.
 
         """
@@ -696,10 +820,13 @@ class BibleSearch(BibleBase):
             self.case_sensitive = True
 
         if search_range:
-            self._range_set = self._verse_range(search_range)
+            self._range_set = self._parse_range(search_range)
 
+        # First join than split to fully seperate at the spaces.
+        # Maybe not the best way but it works.
         self._search_list = ' '.join(search_list).split()
         if not phrase:
+            # Split the highlight for all non-phrase searches.
             self._split_highlight = True
 
         if regex:
@@ -709,150 +836,21 @@ class BibleSearch(BibleBase):
             return self._search(self._search_list, phrase, search_any, strongs,
                                 morph)
 
-    def _phrase_search(self, verse_ref, search_str, strongs=False,
-                       morph=False):
-        """ Searches for the phrase search phrase in the verse.
-
-        """
-
-        if self._range_set and verse_ref not in self._range_set:
-            return False
-
-        verse_text = self.verse_text(verse_ref)
-
-        if strongs:
-            verse_list = self._strongs_regx.findall(verse_text)
-        elif morph:
-            verse_list = self._morph_regx.findall(verse_text)
-        else:
-            if not self.case_sensitive:
-                verse_text = verse_text.lower()
-            verse_list = self.clean_text(verse_text).split()
-
-        search_list = search_str.split()
-
-        if search_list[0] not in verse_list:
-            return False
-
-        if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
-            return True
-
-        search_len = len(search_list)
-        cur_index = -1
-        while search_list[0] in verse_list[cur_index + 1:]:
-            cur_index = verse_list.index(search_list[0], cur_index + 1)
-            if search_list == verse_list[cur_index: cur_index + search_len]:
-                return True
-        return False
-
-    def _phrase_search2(self, search_str, ref_list, strongs=False, morph=False):
-        """ Searches for the phrase search phrase in the verse.
-
-        """
-
-        if self._range_set:
-            ref_list = self._range_set.intersection(ref_list)
-
-        found_set = set()
-        verse_iter = VerseIter(verse_list_iter(set(ref_list)))
-        verse_iter.strongs = strongs
-        verse_iter.morph = morph
-        search_list = search_str.split()
-        search_len = len(search_list)
-        for verse_ref, verse_text in verse_iter:
-            if strongs:
-                verse_list = self._strongs_regx.findall(verse_text)
-            elif morph:
-                verse_list = self._morph_regx.findall(verse_text)
-            else:
-                if not self.case_sensitive:
-                    verse_text = verse_text.lower()
-                verse_list = self.clean_text(verse_text).split()
-
-            if search_list[0] not in verse_list:
-                continue
-
-            if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
-                found_set.add(verse_ref)
-            #cur_index = -1
-            #while search_list[0] in verse_list[cur_index + 1:]:
-                #cur_index = verse_list.index(search_list[0], cur_index + 1)
-                #if search_list == verse_list[cur_index: cur_index + search_len]:
-                    #found_set.add(verse_ref)
-        return found_set
-
-    def _phrase_search3(self, search_str, ref_list, strongs=False, morph=False):
-        """ Searches for the phrase search phrase in the verse.
-
-        """
-
-        if self._range_set:
-            ref_list = self._range_set.intersection(ref_list)
-
-        found_set = set()
-        search_list = search_str.split()
-        search_len = len(search_list)
-        for verse_ref in sorted(ref_list, key=self.index):
-            verse_text = self.verse_text(verse_ref)
-            if strongs:
-                verse_list = self._strongs_regx.findall(verse_text)
-            elif morph:
-                verse_list = self._morph_regx.findall(verse_text)
-            else:
-                if not self.case_sensitive:
-                    verse_text = verse_text.lower()
-                verse_list = self.clean_text(verse_text).split()
-
-            if search_list[0] not in verse_list:
-                continue
-
-            if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
-                found_set.add(verse_ref)
-            #cur_index = -1
-            #while search_list[0] in verse_list[cur_index + 1:]:
-                #cur_index = verse_list.index(search_list[0], cur_index + 1)
-                #if search_list == verse_list[cur_index: cur_index + search_len]:
-                    #found_set.add(verse_ref)
-        return found_set
-
-    def _set_intersect(self, search_list, verse_dict):
-        """ Returns a set with only the verses that contain all the items in
-        search_list.
-
-        """
-
-
-        least_common_set = set(verse_dict.get(search_list.pop(0), []))
-        if least_common_set:
-            for item in search_list:
-                least_common_set.intersection_update(verse_dict.get(item, []))
-
-        return least_common_set
-
-    def _set_union(self, search_list, verse_dict):
-        """ Returns a set with all the verses that contain each item in
-        search_list.
-
-        """
-
-        verse_set = set(verse_dict.get(search_list.pop(0), []))
-        for item in search_list:
-            verse_set.update(verse_dict.get(item, []))
-        return verse_set
-
     def _search(self, search_list, phrase=False, search_any=False,
                 strongs=True, morph=False):
         """ _search(search_list, phrase=False, search_any=False, strongs=True)
         -> For the list of search terms.
                 phrase      -   Find only the phrase phrase.
-                search_any  -   Find any verse with the common words in the
-                                search list
+                search_any  -   Find any verse with the any of the words in the
+                                search list.
                 strongs     -   If True it will search for strongs numbers.
                 morph       -   If True it will search for morphological tags.
 
         """
 
         if not strongs and not morph:
+            # Get rid of any non-alphanumeric characters from the search
+            # string.
             search_str = self.clean_text(' '.join(search_list)).strip()
             if not self.case_sensitive:
                 search_str = search_str.lower()
@@ -906,26 +904,104 @@ class BibleSearch(BibleBase):
             if self._range_set:
                 found_verses = found_verses.intersection(self._range_set)
         else:
-            found_verses = set()
-            least_common_index = sorted_search_list[0]
             print('Searching for phrase "%s"...' % search_str, end='')
             stdout.flush()
             verse_list = self._set_intersect(sorted_search_list, index_dict)
-            #verse_list = index_dict.get(least_common_index, [])
-            found_verses = self._phrase_search2(search_str, verse_list,
-                                                strongs=strongs, morph=morph)
-            #found_verses = self._phrase_search3(search_str, verse_list,
-                                                #strongs=strongs, morph=morph)
-            #for verse_ref in sorted(verse_list, key=self.index):
-            #for verse_ref in index_dict.get(least_common_index, []):
-                #if self._phrase_search(verse_ref, search_str, strongs=strongs, 
-                                       #morph=morph):
-                    #found_verses.add(verse_ref)
+            found_verses = self._phrase_search(search_str, verse_list,
+                                               strongs=strongs, morph=morph)
 
         count = len(found_verses)
         print("Done.\nFound %s verse%s." % (count, 's' if count != 1 else ''))
 
         return found_verses
+
+    def _phrase_search(self, search_str, ref_list, strongs=False, morph=False):
+        """ Searches for the search phrase in the verses.
+
+        """
+
+        if self._range_set:
+            # Make sure not to waste time searching through out of range
+            # verses.  This gets only the items in both sets.
+            ref_list = self._range_set.intersection(ref_list)
+
+        verse_iter = VerseIter(verse_list_iter(set(ref_list)))
+        verse_iter.strongs = strongs
+        verse_iter.morph = morph
+
+        search_list = search_str.split()
+        # Get this out here so we can maybe save a little time later.
+        search_len = len(search_list)
+        found_set = set()
+        for verse_ref, verse_text in verse_iter:
+            # This slows it down.
+            #print('\033[%dD\033[KSearching...%s' % \
+                    #(len(verse_ref) + 20, verse_ref), end='')
+            #stdout.flush()
+            if strongs:
+                verse_list = self._strongs_regx.findall(verse_text)
+            elif morph:
+                verse_list = self._morph_regx.findall(verse_text)
+            else:
+                if not self.case_sensitive:
+                    verse_text = verse_text.lower()
+                verse_list = self._non_alnum_regx.sub(' ', verse_text).split()
+
+            if search_list[0] not in verse_list:
+                continue
+
+            # This one seems faster sometimes.
+            #if ' %s ' % search_str in ' %s ' % ' '.join(verse_list):
+                #found_set.add(verse_ref)
+            #continue
+
+            # This one might be faster.
+            # Jump from slice to slice.  Only looking at slices that are the
+            # size of the search string, and that begin with the first item in
+            # the search string.
+            cur_index = -1
+            # No point looking any further since the first item in the in the
+            # search list is not in the remaining slice.
+            while search_list[0] in verse_list[cur_index + 1:]:
+                # The index of the start of the next slice is the next index
+                # that of the first search term.
+                cur_index = verse_list.index(search_list[0], cur_index + 1)
+                # Check the next slice.
+                if search_list == verse_list[cur_index: cur_index + search_len]:
+                    found_set.add(verse_ref)
+        return found_set
+
+    def _set_intersect(self, search_list, verse_dict):
+        """ Returns a set with only the verses that contain all the items in
+        search_list.
+
+        """
+
+
+        # There may be a better way to do this.  Start with a set of the
+        # verses containing the least common item, then update it with the
+        # intersections it has with the sets of the remaining words.
+        # Effectively removing any verse from the original set that does not
+        # contain all the other search items.
+        least_common_set = set(verse_dict.get(search_list.pop(0), []))
+        if least_common_set:
+            for item in search_list:
+                least_common_set.intersection_update(verse_dict.get(item, []))
+
+        return least_common_set
+
+    def _set_union(self, search_list, verse_dict):
+        """ Returns a set with all the verses that contain each item in
+        search_list.
+
+        """
+
+        # Create one big set of all the verses that contain any one or more of
+        # the search items.
+        verse_set = set(verse_dict.get(search_list.pop(0), []))
+        for item in search_list:
+            verse_set.update(verse_dict.get(item, []))
+        return verse_set
 
     def _regex_search(self, search_str, strongs=False, morph=False):
         """ Uses the search_str as a regular expression to search the bible and
@@ -941,14 +1017,14 @@ class BibleSearch(BibleBase):
         if self._range_set:
             verse_iter = VerseIter(verse_list_iter(self._range_set))
         else:
-            verse_iter = VerseIter('Genesis 1:1')
+            verse_iter = VerseIter(VerseRefIter('Genesis 1:1'))
         verse_iter.strongs = strongs
         verse_iter.morph = morph
 
         for verse_ref, verse_text in verse_iter:
             print('\033[%dD\033[KSearching...%s' % \
-                    (len(verse_ref) + 20, verse_ref), end='')
-            stdout.flush()
+                    (len(verse_ref) + 20, verse_ref), file=stderr, end='')
+            stderr.flush()
 
             if search_regx.search(verse_text):
                 found_verses.add(verse_ref)
@@ -994,6 +1070,10 @@ if __name__ == '__main__':
     parser.add_option('', '--one-line', action='store_true', default=False,
                         help='Print all the verses on one line.', 
                         dest='one_line')
+    parser.add_option('', '--context', action='store', default=0, type="int",
+                        help='The number of verses before and after the match\
+                              to include in the output.',
+                        dest='context')
     parser.add_option('-q', '--quiet', action='store_true', default=False,
                         help='Only print the number of verses found.', 
                         dest='quiet')
@@ -1006,7 +1086,7 @@ if __name__ == '__main__':
             indexer.write_indexes()
             exit(0)
         one_line = options_dict.pop('one_line')
-        search = BibleSearch(one_line=one_line)
+        search = BibleSearch(one_line=one_line, module='KJV')
         if options_dict.pop('show_numbers') or options.strongs:
             search.strongs = True
         if options_dict.pop('show_tags') or options.morph:
@@ -1014,10 +1094,12 @@ if __name__ == '__main__':
         quiet = options_dict.pop('quiet')
         list_only = options_dict.pop('list_only')
         lookup = options_dict.pop('lookup')
+        context = options_dict.pop('context')
+        search.context = context
         if not args:
             verse_list = search.lookup('', options.search_range)
         elif not lookup:
-            verse_list = search.Search(args, **options_dict)
+            verse_list = search.find(args, **options_dict)
         else:
             verse_list = search.lookup(args, options.search_range)
 
@@ -1030,6 +1112,6 @@ if __name__ == '__main__':
             else:
                 search.print_verse_list(verse_list, highlight=True)
         count = len(verse_list)
-        print("Done.\nFound %s verse%s." % (count, 's' if count != 1 else ''))
+        print("\nDone.\nFound %s verse%s." % (count, 's' if count != 1 else ''))
     else:
         parser.print_help()
