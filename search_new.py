@@ -477,14 +477,14 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False):
     extra_space='|\033\[[\d;]*m|\033'
     for item in search_list:
         item = item.strip()
-        is_regex=(item.startswith('&'))
-        #if '*' in item and not item.startswith('&'):
+        is_regex=(('*' in item and ' ' not in item) or item.startswith('&'))
+        if ('*' in item and ' ' not in item) and  not item.startswith('&'):
             # Build a little regular expression to highlight partial words.
-            #item = item[1:] if item[0] in '!^+|' else item
-            #item = item.replace('*', '\w*')
-            #item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
+            item = item[1:] if item[0] in '!^+|' else item
+            item = item.replace('*', '\w*')
+            item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
         if item.startswith('&'):
-            # Just use a regular expression. ('&' mark the term as a regular
+            # Just use a regular expression. ('&' marks the term as a regular
             # expression.)
             item = item[1:]
 
@@ -1599,6 +1599,31 @@ class IndexDict(dict):
             verse_set.update(self[item])
         return verse_set
 
+    def from_partial(self, partial_list, case_sensitive=False, 
+                     common_limit=31103):
+        """ Returns a set of verses that have any the partial words in the
+        list.
+
+        """
+
+        flags = re.I if not case_sensitive else 0
+        verse_set = set()
+
+        # Search through each word key in the index for any word that contains
+        # the partial word.
+        for word in self['_words_']:
+            for partial_word in partial_list:
+                # A Regular expression that matches any number of word
+                # characters for every '*' in the term.
+                reg_str = '\\b%s\\b' % partial_word.replace('*', '\w*')
+                word_regx = re.compile(reg_str, flags)
+                if word_regx.match(word):
+                    temp_list = self[word]
+                    if len(temp_list) < common_limit:
+                        verse_set.update(temp_list)
+
+        return verse_set
+
 
 class CombinedParse(object):
     """ A parser for simple combined search parsing.
@@ -1792,7 +1817,7 @@ class Search(object):
     _whitespace_regx = re.compile(r'\s')
 
     # Cleanup regular expressions.
-    _non_alnum_regx = re.compile(r'[^\w<>\{\}\(\)-]')
+    _non_alnum_regx = re.compile(r'[^\w\*<>\{\}\(\)-]')
     _fix_regx = re.compile(r'\s+')
 
     # Match strongs numbers.
@@ -1800,7 +1825,7 @@ class Search(object):
     # It needs to match with braces or it will catch all capitalized
     # word and words with '-'s in them.
     _morph_regx = re.compile(r'[\(\{](\b[\w-]+\b)[\}\)]', re.I)
-    _word_regx = re.compile(r'\b([\*\w\\-]+)\b')
+    _word_regx = re.compile(r'\b([\w\\-]+)\b')
     _space_regx = re.compile(r'\s+')
     _non_word_regx = re.compile(r'[<>\(\)]')
 
@@ -1989,7 +2014,7 @@ class Search(object):
             else:
                 search_str = search_terms
 
-                # Get the set of found verses.
+            # Get the set of found verses.
             found_set = func(self, search_str, strongs, morph, added,
                              case_sensitive, range_set)
 
@@ -2222,15 +2247,20 @@ class Search(object):
 
         info_print("Searching for verses with any of these partial words '%s'..." % ', '.join(search_terms.split()), tag=1)
 
-        found_set = self._index_dict.value_union(
-                self._words_from_partial(search_terms), case_sensitive)
+        #found_set = self._index_dict.value_union(
+                #self._words_from_partial(search_terms, case_sensitive), 
+                #case_sensitive)
+        search_list = search_terms.split()
+        found_set = self._index_dict.from_partial(search_list, case_sensitive)
 
         return found_set
 
-    def _words_from_partial(self, partial_word_list):
+    def _words_from_partial(self, partial_word_list, case_sensitive=False):
         """ Search through a list of partial words and yield words that match.
 
         """
+
+        flags = re.I if not case_sensitive else 0
 
         # Split the search terms and search through each word key in the index
         # for any word that contains the partial word.
@@ -2240,7 +2270,7 @@ class Search(object):
                 # A Regular expression that matches any number of word
                 # characters for every '*' in the term.
                 reg_str = '\\b%s\\b' % partial_word.replace('*', '\w*')
-                word_regx = re.compile(reg_str, re.I)
+                word_regx = re.compile(reg_str, flags)
                 if word_regx.match(word):
                     yield word
 
@@ -2264,8 +2294,14 @@ class Search(object):
 
             # First make sure we are only searching verses that have all the
             # search terms in them.
-            ref_set = self._index_dict.value_intersect(search_terms.split(), 
-                                                       case_sensitive)
+            search_list = search_terms.split()
+            if '*' in search_terms:
+                ref_set = self._index_dict.from_partial(search_list,
+                                                        case_sensitive,
+                                                        common_limit=500)
+            else:
+                ref_set = self._index_dict.value_intersect(search_list, 
+                                                           case_sensitive)
             if range_str:
                 # Only search through the supplied range.
                 ref_set.intersection_update(range_str)
