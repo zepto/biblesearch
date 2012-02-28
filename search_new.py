@@ -58,6 +58,13 @@ import locale
 
 import Sword
 
+# Highlight colors.
+highlight_color = '\033[7m'
+highlight_text = '%s\\1\033[m' % highlight_color
+word_regx = re.compile(r'\b([\w-]+)\b')
+# Strip previous color.
+strip_color_regx = re.compile('\033\[[\d;]*m')
+
 def info_print(data, end='\n'):
     """ Print the data to stderr as info.
 
@@ -217,9 +224,9 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
     # Get the local text encoding.
     encoding = get_encoding()
 
-    strip_color_regx = re.compile('\033\[[\d;]*m')
+    #strip_color_regx = re.compile('\033\[[\d;]*m')
     italic_regx = re.compile(r'<i>\s?(.*?)\s?</i>', re.S)
-    word_regx = re.compile(r'\b([\w-]+)\b')
+    #word_regx = re.compile(r'\b([\w-]+)\b')
 
     # A substitution replacement function for highlighting italics.
     def italic_color(match):
@@ -255,86 +262,15 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         # Highlight the italic text we previously pulled out.
         verse_text = italic_regx.sub(italic_color, verse_text)
 
-        # Highlight the different elements.
-        if highlight_func:
-            verse_text = highlight_func(verse_text, strongs, morph, *args)
-
         # Highlight Strong's and Morphology if they are visible.
         if strongs:
             verse_text = strongs_regx.sub(strongs_highlight, verse_text)
         if morph:
             verse_text = morph_regx.sub(morph_highlight, verse_text)
 
-        # Finally produce the formated text.
-        yield verse_text
-
-def render_verses(ref_list, wrap=True, strongs=False, morph=False,
-                  highlight_func=None, *args):
-    """ Renders a the verse text at verse_ref.  
-    Returns a strong "verse_ref: verse_text"
-        wrap            -   Whether to wrap the text.
-        strongs         -   Include Strong's Numbers in the output.
-        morph           -   Include Morphological Tags in the output.
-        highlight_func  -   A function to highlight anything else 
-                            (i.e. search terms.)
-        *args           -   Any additional arguments to pass to hightlight_func
-
-        highlight_func should take at least three arguments, strongs, morph,
-        and the verse_text.
-
-    """
-
-    # The Strong's and Morphology matching regular expressions.
-    strongs_regx = re.compile(r'<([GH]\d*)>')
-    morph_regx = re.compile(r'\(([A-Z\d-]*)\)')
-
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'<([GH]?\d+)>', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-
-    # Set the colors of different items.
-    strongs_color = '\033[36m'
-    morph_color = '\033[35m'
-    ref_color = '\033[32m'
-    end_color = '\033[m'
-
-    # Build replacement strings that highlight Strong's Numbers and 
-    # Morphological Tags.
-    strongs_highlight = '<%s\\1%s>' % (strongs_color, end_color)
-    morph_highlight = '(%s\\1%s)' % (morph_color, end_color)
-
-    # Get the local text encoding.
-    encoding = get_encoding()
-
-    # Get an iterator over all the requested verses.
-    verse_iter = IndexedVerseTextIter(iter(ref_list), strongs, morph)
-    for verse_ref, verse_text in verse_iter:
-        # Encode than decode the verse text to make it compatable with
-        # the locale.
-        verse_text = verse_text.strip().encode(encoding, 'replace')
-        verse_text = verse_text.decode(encoding, 'replace')
-        verse_text = '%s: %s' % (verse_ref, verse_text)
-        # The text has to be word wrapped before adding any color, or else the
-        # color will add to the line length and the line will wrap too soon.
-        if wrap:
-            verse_text = fill(verse_text, screen_size()[1], 
-                              break_on_hyphens=False)
-        # Color the verse reference.
-        verse_text = re.sub(verse_ref, '%s%s%s' % (ref_color, verse_ref,
-                                                   end_color), verse_text)
-
         # Highlight the different elements.
         if highlight_func:
-            # First highlight with highlight_func so we don't mess up the
-            # verse text for it.
             verse_text = highlight_func(verse_text, strongs, morph, *args)
-        # Highlight Strong's and Morphology if they are visible.
-        if strongs:
-            verse_text = strongs_regx.sub(strongs_highlight, verse_text)
-        if morph:
-            verse_text = morph_regx.sub(morph_highlight, verse_text)
 
         # Finally produce the formated text.
         yield verse_text
@@ -344,17 +280,18 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
 
     """
 
-    highlight_color = '\033[7m'
-    highlight_text = '%s\\1\033[m' % highlight_color
-    word_regx = re.compile(r'\b([\w-]+)\b')
-    # Strip previous color.
-    strip_color_regx = re.compile('\033\[[\d;]*m')
-
     def highlight_group(match):
         """ Highlight each word/Strong's Number/Morphological Tag in the
         match.
 
         """
+
+        match_text = match.group()
+        for word in match.groups():
+            match_text = re.sub('((?:\033\[[\d+;]*m|\\b)+%s(?:\033\[[\d+;]*m|\\b)+)' % word, highlight_text, match_text)
+            #match_text = match_text.replace(word, '\033[7m%s\033[m' % word) 
+        #print(match_text)
+        return match_text
 
         # Strip any previous colors.
         match_text = strip_color_regx.sub('', match.group())
@@ -367,475 +304,7 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
 
     return verse_text
 
-def highlight_search_terms2(verse_text, strongs, morph, search_str, flags):
-    """ Highlight search terms in the verse text.
-
-    """
-
-    if strongs or morph:
-        # Use an or'ed list of search terms so at least the
-        # indevidual items will be highlighted.  This catches more
-        # than the phrase so it doesn't look right.
-        search_str = search_str.replace(' ', '|')
-    # Catch each strongs/morph/word in the verse...Seems to work.
-    reg_str = r'(\(|<|\b)(%s)(\b|>|\))' % search_str
-    #print(reg_str)
-    highlight_regex = re.compile('(%s)' % search_str, flags)
-
-    highlight_color = '\033[1m'
-    word_highlight = '\\1%s\\2\033[m\\3' % highlight_color
-    word_highlight = '%s\\1\033[m' % highlight_color
-
-    # Return the highlighted text.
-    return highlight_regex.sub(word_highlight, verse_text)
-
-def build_highlight_regx(search_list, case_sensitive):
-    """ Build a regular expression and highlight string to colorize the
-    items in search_list as they appear in a verse.
-
-    """
-
-    # Remove unwanted characters.
-    non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-    capitalize_strongs = lambda m: '%s' % m.groups()[0].upper()
-    capitalize_morph = lambda m: '(%s)' % m.groups()[0].upper()
-    # This will skip words.
-    not_words_str = r'\b\w+\b'
-    # This will skit Strong's Numbers.
-    not_strongs_str = r'<[^>]*>'
-    # This wil skip Morphological Tags.
-    not_morph_str = r'\([^\)]*\)'
-    # This will skip all punctuation.
-    not_punct_str = r'[\s,.;:\\/_\{\}\[\]"\'-]'
-
-    highlight_list = []
-    high_list = []
-    count = 1
-    regx_list = []
-    for item in search_list:
-        # Hack to get rid of unwanted characters.
-        item = ' '.join(non_alnum_regx.sub(' ', item).split())
-        # Fix any strongs or morphological tags.
-        item = strongs_regx.sub(capitalize_strongs, item)
-        item = morph_regx.sub(capitalize_morph, item)
-        item = item.replace('(', '').replace(')', '')
-        temp_list = item.split()
-        #regx_str = r'\b(%s)\b' % r')\b(?:\A|[\s\W]|\Z)*\b('.join(temp_list)
-        #regx_str = r'\b(%s)\b' % r')\b(?:.)*\b('.join(temp_list)
-
-        #TODO: Try and find a regular expression that will work fast here.
-        regx_str = r'\b(%s)\b' % r'\b(?:\b\w+\b|<[^>]*>|\([^\)]*\)|\W)*\b'.join(temp_list)
-        regx_list.append(re.compile(regx_str, re.I))
-        #print(regx_str)
-    return regx_list
-    def test_func(match):
-        ret_list = []
-        before_bound = re.compile(r'(\A|[\W\s])\b', re.I)
-        after_bound = re.compile(r'\b([\s\W]|\Z)', re.I)
-        temp = before_bound.sub('\\1\033[1m', match.group())
-        temp = after_bound.sub('\033[m\\1', temp)
-        #print(temp)
-        return temp
-        print(match.groups(), match.group())
-        for i in match.groups():
-            ret_list.append('\033[1m%s\033[m' % i)
-        return ' '.join(ret_list)
-
-    #l = IndexedVerseTextIter(iter({"II Corinthians 3:18"}), True, True)
-    #l = IndexedVerseTextIter(iter({"Hebrews 1:10"}), True, True)
-    l = IndexedVerseTextIter(iter({"Revelation of John 21:26"}), True, True)
-    ref, text = next(l)
-    text = text.strip()
-    for i in regx_list:
-        match = i.search(text)
-        if match:
-            #print(match.groups())
-            print(i.sub(test_func, text))
-    exit()
-    return regx_list
-
-def build_highlight_regx2(search_list, case_sensitive):
-    """ Build a regular expression and highlight string to colorize the
-    items in search_list as they appear in a verse.
-
-    """
-
-    # Remove unwanted characters.
-    non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-    capitalize_strongs = lambda m: '%s' % m.groups()[0].upper()
-    capitalize_morph = lambda m: '(%s)' % m.groups()[0].upper()
-    # This will skip words.
-    not_words_str = r'\b\w+\b'
-    # This will skit Strong's Numbers.
-    not_strongs_str = r'<[^>]*>'
-    # This wil skip Morphological Tags.
-    not_morph_str = r'\([^\)]*\)'
-    # This will skip all punctuation.
-    not_punct_str = r'[\s,.;:\\/_\{\}\[\]"\'-]'
-    # To check for spaces.
-    whitespace_regx = re.compile(r'\s')
-
-    flags = re.I if not case_sensitive else 0
-
-    highlight_list = []
-    high_list = []
-    count = 1
-    regx_list = []
-    strongs_found = morph_found = word_found = False
-    for item in search_list:
-        # Hack to get rid of unwanted characters.
-        item = ' '.join(non_alnum_regx.sub(' ', item).split())
-        # Phrases will have spaces in them
-        phrase = bool(whitespace_regx.search(item))
-        
-        # Fix any strongs or morphological tags.
-        item, strongs_count = morph_regx.subn(capitalize_morph, item)
-        item, morph_count = strongs_regx.subn(capitalize_strongs, item)
-        temp_list = []
-        strongs_found = morph_found = word_found = False
-        for word in item.split():
-            match = strongs_regx.match(word)
-            if match:
-                temp_list.append('<(%s)>' % match.group())
-                strongs_found = True
-            else:
-                match = morph_regx.match(word)
-                if match:
-                    temp_list.append('\((%s)\)' % re.escape(match.group().replace('(', '').replace(')', '')))
-                    morph_found = True
-                else:
-                    temp_list.append('\\b(%s)\\b' % word)
-                    word_found = True
-        if phrase:
-            space_str = r'(?:%s' % not_punct_str
-            if not strongs_found:
-                # Skip over all Strong's Numbers.
-                space_str = r'%s|%s' % (space_str, not_strongs_str)
-            if not morph_found:
-                # Skip all Morphological Tags.
-                space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not word_found:
-                # Skip all words.
-                space_str = r'%s|%s' % (space_str, not_words_str)
-            space_str = r'%s)*' % space_str
-        else:
-            space_str = ''
-
-        regx_list.append(re.compile(space_str.join(temp_list), flags))
-    return regx_list
-
-    def test_func(match):
-        ret_list = []
-        before_bound = re.compile(r'(\A|[\W\s])\b', re.I)
-        after_bound = re.compile(r'\b([\s\W]|\Z)', re.I)
-        temp = before_bound.sub('\\1\033[1m', match.group())
-        temp = after_bound.sub('\033[m\\1', temp)
-        #print(temp)
-        return temp
-        print(match.groups(), match.group())
-        for i in match.groups():
-            ret_list.append('\033[1m%s\033[m' % i)
-        return ' '.join(ret_list)
-
-    #l = IndexedVerseTextIter(iter({"II Corinthians 3:18"}), True, True)
-    l = IndexedVerseTextIter(iter({"Hebrews 1:10"}), True, True)
-    ref, text = next(l)
-    text = text.strip()
-    for i in regx_list:
-        match = i.search(text)
-        if match:
-            #print(match.groups())
-            print(i.sub(test_func, text))
-    #exit()
-    return regx_list
-
-def build_highlight_regx3(search_list, case_sensitive):
-    """ Build a regular expression and highlight string to colorize the
-    items in search_list as they appear in a verse.
-
-    """
-
-    # Remove unwanted characters.
-    non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-    capitalize_strongs = lambda m: '<%s>' % m.groups()[0].upper()
-    capitalize_morph = lambda m: '\(%s\)' % re.escape(m.groups()[0]).upper()
-    # This will skip words.
-    not_words_str = r'\b\w+\b'
-    # This will skit Strong's Numbers.
-    not_strongs_str = r'<[^>]*>'
-    # This wil skip Morphological Tags.
-    not_morph_str = r'\([^\)]*\)'
-    # This will skip all punctuation.
-    not_punct_str = r'[\s,\.;:\\/_\{\}\[\]"\'-]'
-    # To check for spaces.
-    whitespace_regx = re.compile(r'\s')
-
-    flags = re.I if not case_sensitive else 0
-
-    highlight_list = []
-    high_list = []
-    count = 1
-    regx_list = []
-    strongs_list = []
-    morph_list = []
-    no_word_list = []
-    strongs_found = morph_found = word_found = False
-    def word_select(match):
-        match_text = match.groups()[0]
-        if match_text.upper() in no_word_list:
-            return re.escape(match.group())
-        else: 
-            return ' \\b(%s)\\b ' % match.groups()[0]
-
-    for item in search_list:
-        # Hack to get rid of unwanted characters.
-        item = ' '.join(non_alnum_regx.sub(' ', item).split())
-        # Phrases will have spaces in them
-        phrase = bool(whitespace_regx.search(item))
-
-        # Build a list of non-words.
-        #strongs_list = strongs_regx.findall(item.upper())
-        #morph_list = morph_regx.findall(item.upper())
-        #no_word_list.extend(strongs_list)
-        #no_word_list.extend(morph_list)
-        
-        # Fix any strongs or morphological tags.
-        item, strongs_count = morph_regx.subn(capitalize_morph, item)
-        item, morph_count = strongs_regx.subn(capitalize_strongs, item)
-
-        # Select all words.
-        word_regx = re.compile(r'\b([\w\\-]+)\b')
-        print(word_regx.sub('(\\1)', item))
-        item, word_count = word_regx.subn('(\\\\b\\1\\\\b)', item)
-        #item, word_count = word_regx.subn(word_select, item)
-        word_found = (strongs_count + morph_count) < word_count
-        
-        temp_list = item.split()
-        print(temp_list, bool(strongs_count), bool(morph_count), word_found)
-        if phrase:
-            space_str = r'(?:%s' % not_punct_str
-            if not bool(strongs_count):
-                # Skip over all Strong's Numbers.
-                space_str = r'%s|%s' % (space_str, not_strongs_str)
-            if not bool(morph_count):
-                # Skip all Morphological Tags.
-                space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not word_found:
-                # Skip all words.
-                space_str = r'%s|%s' % (space_str, not_words_str)
-            space_str = r'%s)*' % space_str
-        else:
-            space_str = ''
-        print(space_str.join(temp_list))
-        #exit()
-
-        regx_list.append(re.compile(space_str.join(temp_list), flags))
-    return regx_list
-
-    def test_func(match):
-        ret_list = []
-        before_bound = re.compile(r'(\A|[\W\s])\b', re.I)
-        after_bound = re.compile(r'\b([\s\W]|\Z)', re.I)
-        temp = before_bound.sub('\\1\033[1m', match.group())
-        temp = after_bound.sub('\033[m\\1', temp)
-        #print(temp)
-        return temp
-        print(match.groups(), match.group())
-        for i in match.groups():
-            ret_list.append('\033[1m%s\033[m' % i)
-        return ' '.join(ret_list)
-
-    #l = IndexedVerseTextIter(iter({"II Corinthians 3:18"}), True, True)
-    l = IndexedVerseTextIter(iter({"Hebrews 1:10"}), True, True)
-    ref, text = next(l)
-    text = text.strip()
-    for i in regx_list:
-        match = i.search(text)
-        if match:
-            #print(match.groups())
-            print(i.sub(test_func, text))
-    #exit()
-    return regx_list
-
-def build_highlight_regx4(search_list, case_sensitive):
-    """ Build a regular expression and highlight string to colorize the
-    items in search_list as they appear in a verse.
-
-    """
-
-    # Remove unwanted characters.
-    non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-    capitalize_strongs = lambda m: '<%s>' % m.groups()[0].upper()
-    capitalize_morph = lambda m: '\(%s\)' % re.escape(m.groups()[0]).upper()
-    # This will skip words.
-    not_words_str = r'\b\w+\b'
-    # This will skit Strong's Numbers.
-    not_strongs_str = r'<[^>]*>'
-    # This wil skip Morphological Tags.
-    not_morph_str = r'\([^\)]*\)'
-    # This will skip all punctuation.
-    not_punct_str = r'[\s,\.;:\\/_\{\}\[\]"\'-]'
-    # To check for spaces.
-    whitespace_regx = re.compile(r'\s')
-
-    flags = re.I if not case_sensitive else 0
-
-    regx_list = []
-
-    word_found = False
-    for item in search_list:
-        space_str = ''
-        # Hack to get rid of unwanted characters.
-        item = ' '.join(non_alnum_regx.sub(' ', item).split())
-        # Phrases will have spaces in them
-        phrase = bool(whitespace_regx.search(item))
-        
-        # Fix any strongs or morphological tags.
-        item, morph_count = morph_regx.subn(capitalize_morph, item)
-        item, strongs_count = strongs_regx.subn(capitalize_strongs, item)
-
-        # Select all words.
-        word_regx = re.compile(r'\b([\w\\-]+)\b')
-        item, word_count = word_regx.subn('(\\\\b\\1\\\\b)', item)
-        word_found = (strongs_count + morph_count) < word_count
-        
-        if phrase:
-            space_str = r'(?:%s' % not_punct_str
-            if not bool(strongs_count):
-                # Skip over all Strong's Numbers.
-                space_str = r'%s|%s' % (space_str, not_strongs_str)
-            if not bool(morph_count):
-                # Skip all Morphological Tags.
-                space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not word_found:
-                # Skip all words.
-                space_str = r'%s|%s' % (space_str, not_words_str)
-            space_str = r'%s)*?' % space_str
-        else:
-            space_str = ''
-        print(item, bool(strongs_count), bool(morph_count), word_found)
-        reg_str = space_str.join(item.split())
-        print(reg_str)
-        #exit()
-
-        regx_list.append(re.compile(reg_str, flags))
-    return regx_list
-
-    def test_func(match):
-        ret_list = []
-        before_bound = re.compile(r'(\A|[\W\s])\b', re.I)
-        after_bound = re.compile(r'\b([\s\W]|\Z)', re.I)
-        temp = before_bound.sub('\\1\033[1m', match.group())
-        temp = after_bound.sub('\033[m\\1', temp)
-        #print(temp)
-        return temp
-        print(match.groups(), match.group())
-        for i in match.groups():
-            ret_list.append('\033[1m%s\033[m' % i)
-        return ' '.join(ret_list)
-
-    #l = IndexedVerseTextIter(iter({"II Corinthians 3:18"}), True, True)
-    l = IndexedVerseTextIter(iter({"Hebrews 1:10"}), True, True)
-    ref, text = next(l)
-    text = text.strip()
-    for i in regx_list:
-        match = i.search(text)
-        if match:
-            #print(match.groups())
-            print(i.sub(test_func, text))
-    #exit()
-    return regx_list
-
-def old_search_terms_to_regex(search_terms, case_sensitive):
-    """ Build a regular expression from the search_terms to match a verse in
-    the Bible.
-
-    """
-
-    # Remove unwanted characters.
-    non_alnum_regx = re.compile(r'[^\w<>\(\)-]')
-    # Match strongs numbers.
-    strongs_regx = re.compile(r'[<]?([GH]\d+)[>]?', re.I)
-    # It needs to match with parenthesis or it will catch all capitalized
-    # word and words with '-'s in them.
-    morph_regx = re.compile(r'\(([\w-]+)\)', re.I)
-
-    # Fix Strong's Numbers.
-    capitalize_strongs = lambda m: '<%s>' % m.groups()[0].upper()
-
-    capitalize_morph = lambda m: '\(%s\)' % re.escape(m.groups()[0]).upper()
-
-    # This will skip words.
-    not_words_str = r'\b\w+\b'
-    # This will skit Strong's Numbers.
-    not_strongs_str = r'<[^>]*>'
-    # This wil skip Morphological Tags.
-    not_morph_str = r'\([^\)]*\)'
-    # This will skip all punctuation.
-    not_punct_str = r'[\s,\.;:\\/_\{\}\[\]"\'-]'
-    # To check for spaces.
-    whitespace_regx = re.compile(r'\s')
-
-    flags = re.I if not case_sensitive else 0
-
-    space_str = ''
-    # Hack to get rid of unwanted characters.
-    item = ' '.join(non_alnum_regx.sub(' ', search_terms).split())
-
-    # Phrases will have spaces in them
-    phrase = bool(whitespace_regx.search(item))
-    
-    # Fix any strongs or morphological tags.
-    item, morph_count = morph_regx.subn(capitalize_morph, item)
-    item, strongs_count = strongs_regx.subn(capitalize_strongs, item)
-
-    # Select all words.
-    word_regx = re.compile(r'\b([\w\\-]+)\b')
-    item, word_count = word_regx.subn('(\\\\b\\1\\\\b)', item)
-    word_found = (strongs_count + morph_count) < word_count
-    
-    if phrase:
-        space_str = r'(?:%s' % not_punct_str
-        if not bool(strongs_count):
-            # Skip over all Strong's Numbers.
-            space_str = r'%s|%s' % (space_str, not_strongs_str)
-        if not bool(morph_count):
-            # Skip all Morphological Tags.
-            space_str = r'%s|%s' % (space_str, not_morph_str)
-        if not word_found:
-            # Skip all words.
-            space_str = r'%s|%s' % (space_str, not_words_str)
-        space_str = r'%s)*?' % space_str
-    else:
-        space_str = ''
-
-    print(item, bool(strongs_count), bool(morph_count), word_found)
-    reg_str = space_str.join(item.split())
-    print(reg_str)
-
-    return re.compile(reg_str, flags)
-
-def build_highlight_regx5(search_list, case_sensitive):
+def build_highlight_regx(search_list, case_sensitive, sloppy=False):
     """ Build a regular expression and highlight string to colorize the
     items in search_list as they appear in a verse.
 
@@ -848,7 +317,7 @@ def build_highlight_regx5(search_list, case_sensitive):
     for item in search_list:
         regx_list.append(Search.search_terms_to_regex(item, case_sensitive,
                 word_bound='(?:\033\[[\d;]*m|\\\\b)+',
-                extra_space='|\033\[[\d;]*m|\033'))
+                extra_space='|\033\[[\d;]*m|\033', sloppy=sloppy))
 
     return regx_list
 
@@ -1918,7 +1387,8 @@ class Search(object):
 
     @classmethod
     def search_terms_to_regex(cls, search_terms, case_sensitive, 
-                              word_bound='\\\\b', extra_space=''):
+                              word_bound='\\\\b', extra_space='', 
+                              sloppy=False):
         """ Build a regular expression from the search_terms to match a verse
         in the Bible.
 
@@ -1965,13 +1435,14 @@ class Search(object):
             # Build the string that is inserted between the items in the 
             # search string.
             space_str = r'(?:%s%s' % (not_punct_str, extra_space)
-            if not bool(strongs_count):
+            if not bool(strongs_count) or sloppy:
                 # Skip over all Strong's Numbers.
                 space_str = r'%s|%s' % (space_str, not_strongs_str)
-            if not bool(morph_count):
+            if not bool(morph_count) or sloppy:
                 # Skip all Morphological Tags.
                 space_str = r'%s|%s' % (space_str, not_morph_str)
-            if not words_found or bool(morph_count) or bool(strongs_count):
+            if not words_found or bool(morph_count) or bool(strongs_count) or \
+                    sloppy:
                 # Skip words.  If word attributes are in the search we can
                 # skip over words and still keep it a phrase.
                 space_str = r'%s|%s' % (space_str, not_words_str)
@@ -2271,7 +1742,113 @@ class Search(object):
 
         return found_set
 
+    def _process_phrase(func):
+        """ Returns a wrapper function for wrapping phrase like searches.
+
+        """
+
+        @wraps(func)
+        def wrapper(self, search_terms, strongs=False, morph=False,
+                    case_sensitive=False, range_str=''):
+            """ Process the search terms according to the wrapped functions
+            requirements, then apply the range, if given, to the returned set
+            of verses.
+
+            """
+
+            #func(self, search_terms, strongs=False, morph=False,
+                 #case_sensitive=False, range_str='')
+
+            # First make sure we are only searching verses that have all the
+            # search terms in them.
+            ref_set = self._index_dict.value_intersect(search_terms.split(), 
+                                                       case_sensitive)
+            if range_str:
+                # Only search through the supplied range.
+                ref_set.intersection_update(range_str)
+
+            # No need to search for a single word phrase.
+            if len(search_terms.split()) == 1:
+                return ref_set
+
+            # Sort the list so it may be a little faster.  Only needed if we're
+            # using the sword module to look them up.
+            ref_iter = self._sorted_iter(ref_set)
+            
+            if func.__name__ == 'phrase_search':
+                # Make all the terms the same case if case doesn't matter.
+                flags = re.I if not case_sensitive else 0
+
+                if strongs:
+                    # Match strongs phrases.
+                    search_reg_str = search_terms.replace(' ', r'[^<]*')
+                elif morph:
+                    # Match morphological phrases.
+                    search_reg_str = search_terms.replace(' ', r'[^\{]*')
+                else:
+                    # Match word phrases
+                    search_reg_str = '\\b%s\\b' % search_terms.replace(' ', 
+                            r'\b(<[^>]*>|\{[^\}]*\}|\W)*\b')
+                
+                # Make a regular expression from the search terms.
+                search_regx = re.compile(search_reg_str, flags)
+            else:
+                # Disable Strong's and Morphological if only words are used.
+                strongs = bool(self._strongs_regx.search(search_terms))
+                morph = bool(self._morph_regx.search(search_terms))
+
+                # Check if the regular expression should be sloppy.
+                sloppy = (func.__name__ == 'ordered_multiword_search')
+                search_regx = self.search_terms_to_regex(search_terms,
+                                                         case_sensitive,
+                                                         sloppy=sloppy)
+            return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+
+        return wrapper
+
     @_process_search
+    #@_process_phrase
+    def ordered_multiword_search(self, search_terms, strongs=False,
+                                 morph=False, case_sensitive=False,
+                                 range_str=''):
+        """ ordered_multiword_search(self, search_terms, strongs=False,
+            morph=False, case_sensitive=False, range_str='') -> 
+        Perform an ordered multiword search.  Like a multiword search, but all
+        the words have to be in order.
+                
+            search_terms    -   Terms to search for.
+            strongs         -   Search for Strong's Number phrases.
+            morph           -   Search for Morphological Tag phrases.
+            case_sensitive  -   Perform a case sensitive search.
+            range_str       -   A verse range to limit the search to.
+
+        """
+
+        info_print("Searching for verses with these words in order '%s'..." % search_terms)
+
+        # First make sure we are only searching verses that have all the
+        # search terms in them.
+        ref_set = self._index_dict.value_intersect(search_terms.split(), 
+                                                   case_sensitive)
+        if range_str:
+            # Only search through the supplied range.
+            ref_set.intersection_update(range_str)
+
+        # No need to search for a single word phrase.
+        if len(search_terms.split()) == 1:
+            return ref_set
+
+        # Sort the list so it may be a little faster.  Only needed if we're
+        # using the sword module to look them up.
+        ref_iter = self._sorted_iter(ref_set)
+        
+        search_regx = self.search_terms_to_regex(search_terms, case_sensitive,
+                                                 sloppy=True)
+
+        return self.find_from_regex(ref_iter, search_regx, strongs, morph)
+
+    @_process_search
+    #@_process_phrase
     def phrase_search(self, search_terms, strongs=False, morph=False, 
                       case_sensitive=False, range_str=''):
         """ phrase_search(self, search_terms, strongs=False, morph=False,
@@ -2312,17 +1889,19 @@ class Search(object):
             search_reg_str = search_terms.replace(' ', r'[^<]*')
         elif morph:
             # Match morphological phrases.
-            search_reg_str = search_terms.replace(' ', r'\)[^\(]*\(')
+            search_reg_str = search_terms.replace(' ', r'[^\{]*')
         else:
             # Match word phrases
             search_reg_str = '\\b%s\\b' % search_terms.replace(' ', 
-                    r'\b(<[^>]*>|\([^\)]*\)|\W)*\b')
+                    r'\b(<[^>]*>|\{[^\}]*\}|\W)*\b')
         
+        # Make a regular expression from the search terms.
         search_regx = re.compile(search_reg_str, flags)
 
         return self.find_from_regex(ref_iter, search_regx, strongs, morph)
 
     @_process_search
+    #@_process_phrase
     def mixed_phrase_search(self, search_terms, strongs=False, morph=False, 
                       case_sensitive=False, range_str=''):
         """ mixed_phrase_search(self, search_terms, strongs=False, morph=False,
@@ -2351,9 +1930,6 @@ class Search(object):
         if len(search_terms.split()) == 1:
             return ref_set
 
-        # Make a regular expression from the search terms.
-        search_regx = self.search_terms_to_regex(search_terms, case_sensitive)
-
         # Sort the list so it may be a little faster.  Only needed if we're
         # using the sword module to look them up.
         ref_iter = self._sorted_iter(ref_set)
@@ -2361,6 +1937,9 @@ class Search(object):
         # Disable Strong's and Morphological if only words are used.
         strongs = bool(self._strongs_regx.search(search_terms))
         morph = bool(self._morph_regx.search(search_terms))
+
+        # Make a regular expression from the search terms.
+        search_regx = self.search_terms_to_regex(search_terms, case_sensitive)
 
         return self.find_from_regex(ref_iter, search_regx, strongs, morph)
 
@@ -2383,8 +1962,14 @@ class Search(object):
 
         # re.I is case insensitive.
         flags = re.I if not case_sensitive else 0
-        # Make a regular expression from the search_terms.
-        search_regx = re.compile(r'%s' % search_terms, flags)
+
+        try:
+            # Make a regular expression from the search_terms.
+            search_regx = re.compile(r'%s' % search_terms, flags)
+        except Exception as err:
+            print('There is a problem with the regular expression "%s": %s' % \
+                    (search_terms, err), file=sys.stderr)
+            exit()
 
         if range_str:
             # Only search through the supplied range.
@@ -2484,7 +2069,12 @@ class Search(object):
 
             if ' ' in term:
                 # Search term is a quoted string, so treat it like a phrase.
-                search_func = self.mixed_phrase_search
+                if term.startswith('~'):
+                    # ~'s trigger ordered multiword or sloppy phrase search.
+                    term = term[1:]
+                    search_func = self.ordered_multiword_search
+                else:
+                    search_func = self.mixed_phrase_search
             elif regex_regx.match(term):
                 # Allow regular expression searching.
                 search_func = self.regex_search
@@ -2701,6 +2291,7 @@ def main(arg_list, **kwargs):
         if search_type.startswith('sword_'):
             extras = (search_type[6:],)
             search_type = search_type[:5]
+            highlight_list = arg_list
 
         try:
             # Get the search function asked for.
@@ -2734,30 +2325,24 @@ def main(arg_list, **kwargs):
             arg_parser = CombinedParse(arg_str)
             parsed_args = arg_parser.word_list
             not_l = arg_parser.not_list
+            # Remove any stray '+'s.
+            #highlight_str = highlight_str.replace('|+', ' ')
             if search_type == 'combined_phrase':
                 # A phrase search needs to highlight phrases.
                 highlight_list = parsed_args
             else:
                 highlight_list = ' '.join(parsed_args).split()
-            # Remove any stray '+'s.
-            highlight_str = highlight_str.replace('|+', ' ')
         # Build the highlight string for the other searches.
         elif search_type in ['anyword', 'multiword', 'eitheror']:
             # Highlight each word separately.
             highlight_list = arg_str.split()
         elif search_type == 'mixed':
-            # In mixed search phrases are in quotes so the arg_list should b
-            # what we want.
-            highlight_list = arg_list
-        elif search_type in ['phrase', 'mixed_phrase']:
-            # Make sure Morphological tags are surrounded by parenthesis for
-            # phrase search.
-            if morph_search:
-                temp_str = arg_str.replace('(', '').replace(')', '')
-                highlight_list = ['(%s)' % ') ('.join(temp_str.split())]
-            else:
-                # Phrases should highlight phrases.
-                highlight_list = [arg_str]
+            # In mixed search phrases are in quotes so the arg_list should be
+            # what we want, but don't include any !'ed words.
+            highlight_list = [i for i in arg_list if not i.startswith('!')]
+        elif search_type in ['phrase', 'mixed_phrase', 'ordered_multiword']:
+            # Phrases should highlight phrases.
+            highlight_list = [arg_str]
 
         if lookup:
             # Highlight anything else the user typed in.
@@ -2765,7 +2350,8 @@ def main(arg_list, **kwargs):
 
         # Don't modify regular expression searches.
         if search_type != 'regex':
-            regx_list = build_highlight_regx5(highlight_list, case_sensitive)
+            regx_list = build_highlight_regx(highlight_list, case_sensitive,
+                        (search_type == 'ordered_multiword' or '~' in arg_str))
         else:
             regx_list = [re.compile(arg_str, re.I if case_sensitive else 0)]
 
@@ -2798,7 +2384,7 @@ if __name__ == '__main__':
                         help='(Re-)build the search index.',
                         dest='build_index')
     parser.add_option('-s', '--search-type', action='store', default='phrase',
-            help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: phrase)',
+            help='Valid search types are: phrase, multiword, anyword, eitheror, mixed, mixed_phrase, ordered_multiword, regex, combined, combined_phrase, sword, sword_phrase, sword_multiword, sword_entryattrib, and sword_lucene. (default: phrase)',
             dest='search_type')
     parser.add_option('-S', '--strongs', action='store_true', default=False,
                         help='Search for strongs numbers. (Ignored in mixed search)', dest='search_strongs')
