@@ -3,7 +3,7 @@
 # -*- coding: UTF8 -*-
 #
 # A sword KJV indexed search module.
-# Copyright (C) 2011 Josiah Gordon <josiahg@gmail.com>
+# Copyright (C) 2012 Josiah Gordon <josiahg@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -1001,6 +1001,7 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
                                highlight_func=None, module='KJV', *args):
     """ Renders a the verse text at verse_ref with italics highlighted.
     Returns a strong "verse_ref: verse_text"
+        ref_list        -   List of references to render
         wrap            -   Whether to wrap the text.
         strongs         -   Include Strong's Numbers in the output.
         morph           -   Include Morphological Tags in the output.
@@ -1008,11 +1009,12 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         notes           -   Include study notes at the end of the text.
         highlight_func  -   A function to highlight anything else
                             (i.e. search terms.)
+        module          -   Sword module to render from.
         *args           -   Any additional arguments to pass to
                             hightlight_func
 
-        highlight_func should take at least three arguments, strongs, morph,
-        and the verse_text.
+        highlight_func should take at least three arguments, verse_text,
+        strongs, and morph.
 
     """
 
