@@ -869,7 +869,7 @@ def render_raw2(verse_text, strongs=False, morph=False):
             if strongs and strong_regx.search(tag_attr):
                 strongs_list = strong_regx.findall(tag_attr)
                 strongs_str = ' <%s>' % '> <'.join(strongs_list)
-            if  morph and morph_regx.search(tag_attr):
+            if morph and morph_regx.search(tag_attr):
                 morph_list = morph_regx.findall(tag_attr)
                 morph_str = ' {%s}' % '} {'.join(morph_list)
 
