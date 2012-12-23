@@ -661,18 +661,13 @@ of searches, including the following:
 from sys import argv, exit
 from cmd import Cmd
 from difflib import get_close_matches
-from os import getcwd, getenv
-from functools import wraps, partial
-from argparse import ArgumentParser
-from time import strftime, mktime, localtime
-from textwrap import wrap, fill, TextWrapper, dedent
+from functools import wraps
+from time import strftime
+from textwrap import fill
 from struct import unpack
 from termios import TIOCGWINSZ
 from fcntl import ioctl
 from collections import defaultdict
-from tarfile import TarFile, TarInfo
-from io import BytesIO
-from contextlib import closing
 from itertools import product
 from xml.dom.minidom import parseString
 import dbm
@@ -691,12 +686,13 @@ COLOR_LEVEL = 3
 # use the current working directory.
 INDEX_PATH = os.path.join(os.getenv('HOME'), '.biblesearch')
 if not os.path.isdir(INDEX_PATH):
-    INDEX_PATH = getcwd()
+    INDEX_PATH = os.getcwd()
 
 # Highlight colors.
 highlight_color = '\033[7m'
 highlight_text = '%s\\1\033[m' % highlight_color
 word_regx = re.compile(r'\b([\w-]+)\b')
+
 # Strip previous color.
 strip_color_regx = re.compile('\033\[[\d;]*m')
 
