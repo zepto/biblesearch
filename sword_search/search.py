@@ -1108,13 +1108,14 @@ def render_verses_with_italics(ref_list, wrap=True, strongs=False,
         if COLOR_LEVEL >= 3:
             # Highlight the different elements.
             if highlight_func:
-                verse_text = highlight_func(verse_text, strongs, morph, *args)
+                verse_text = highlight_func(verse_text, *args)
 
         # Finally produce the formated text.
         yield verse_text
 
 
-def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
+def highlight_search_terms(verse_text, regx_list, highlight_text,
+                           color_tag='\033\[[\d+;]*m', *args):
     """ Highlight search terms in the verse text.
 
     """
@@ -1132,11 +1133,11 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
                 try:
                     match_text = re.sub('''
                             (
-                            (?:\033\[[\d+;]*m|\\b)+
-                            %s
-                            (?:\033\[[\d+;]*m|\\b)+
+                            (?:{0}|\\b)+
+                            {1}
+                            (?:{0}|\\b)+
                             )
-                            ''' % re.escape(word),
+                            '''.format(color_tag, re.escape(word)),
                             highlight_text, match_text, flags=re.X)
                 except Exception as err:
                     info_print("Error with highlighting word %s: %s" % \
@@ -1157,7 +1158,8 @@ def highlight_search_terms(verse_text, strongs, morph, regx_list, flags):
     return verse_text
 
 
-def build_highlight_regx(search_list, case_sensitive, sloppy=False):
+def build_highlight_regx(search_list, case_sensitive, sloppy=False,
+                         color_tag='\033\[[\d+;]*m', extra_tag='\033'):
     """ Build a regular expression and highlight string to colorize the
     items in search_list as they appear in a verse.
 
@@ -1168,9 +1170,11 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False):
 
     regx_list = []
     # Extra word boundry to catch ansi color escape sequences.
-    word_bound = '(?:\033\[[\d;]*m|\\\\b)+'
+    escaped_word_bound = '(?:{0}|\\\\b)+'.format(color_tag)
+    word_bound = '(?:{0}|\\b)+'.format(color_tag)
     # Extra space filler to pass over ansi color escape sequences.
-    extra_space = '|\033\[[\d;]*m|\033'
+    extra_space = '|{0}|{1}'.format(color_tag, extra_tag)
+    # print(word_bound, extra_space, '(?:\033\[[\d+;]*m|\\b)+')
     for item in search_list:
         item = item.strip()
         is_regex = (('*' in item and ' ' not in item) or item.startswith('&'))
@@ -1178,14 +1182,14 @@ def build_highlight_regx(search_list, case_sensitive, sloppy=False):
             # Build a little regular expression to highlight partial words.
             item = item[1:] if item[0] in '!^+|' else item
             item = item.replace('*', '\w*')
-            item = r'{0}({1}){0}'.format('(?:\033\[[\d;]*m|\\b)+', item)
+            item = r'{0}({1}){0}'.format(word_bound, item)
         if item.startswith('&'):
             # Just use a regular expression. ('&' marks the term as a regular
             # expression.)
             item = item[1:]
 
         regx_list.append(Search.search_terms_to_regex(item, case_sensitive,
-                word_bound=word_bound, extra_space=extra_space,
+                word_bound=escaped_word_bound, extra_space=extra_space,
                 sloppy=(sloppy or '~' in item), is_regex=is_regex))
 
     return regx_list
@@ -4147,7 +4151,8 @@ class SearchCmd(Cmd):
                                                search_added,
                                                show_notes,
                                                highlight_search_terms,
-                                               module_name, regx_list, flags)
+                                               module_name, regx_list,
+                                               highlight_text, flags)
         if one_line:
             # Print it all on one line.
             print('  '.join(verse_gen))

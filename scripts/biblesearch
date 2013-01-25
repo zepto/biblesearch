@@ -226,7 +226,8 @@ def main(arg_list, **kwargs):
                                                search_added,
                                                kwargs['show_notes'],
                                                highlight_search_terms,
-                                               module_name, regx_list, flags)
+                                               module_name, regx_list,
+                                               highlight_text, flags)
         if kwargs['one_line']:
             # Print it all on one line.
             print('  '.join(verse_gen))
