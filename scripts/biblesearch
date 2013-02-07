@@ -227,7 +227,8 @@ def main(arg_list, **kwargs):
                                                kwargs['show_notes'],
                                                highlight_search_terms,
                                                module_name, regx_list,
-                                               highlight_text, flags)
+                                               highlight_text,
+                                               '\033\[[\d+;]*m', flags)
         if kwargs['one_line']:
             # Print it all on one line.
             print('  '.join(verse_gen))
