@@ -1476,7 +1476,7 @@ class VerseTextIter(object):
             info_print(attr_dict, tag=4)
             # Get any paragraph marker.
             if 'marker' in attr_dict:
-                verse_text = '<p>%s</p>' % attr_dict['marker']
+                verse_text = '<p>%s</p> ' % attr_dict['marker']
             else:
                 verse_text = ''
             italic_str = '%s'
@@ -1484,18 +1484,18 @@ class VerseTextIter(object):
             for key, value in attr_dict.items():
                 # Italicize any added text.
                 if 'added' in value.lower():
-                    italic_str = '<i>%s</i>'
+                    italic_str = '<i>%s</i> '
                 # Label study notes.
                 elif 'study' in value.lower() or 'note' in name.lower():
                     note_str = '<n>%s</n>'
                 # Check for strongs.
                 elif 'lemma' in key.lower() and strongs:
                     for num in value.split():
-                        strongs_str += ' <%s> ' % num.split(':')[1]
+                        strongs_str += ' <%s>' % num.split(':')[1]
                 # Check for morphology.
                 elif 'morph' in key.lower() and morph:
                     for tag in value.split():
-                        morph_str += ' {%s} ' % tag.split(':')[1]
+                        morph_str += ' {%s}' % tag.split(':')[1]
         # Recursively build the text from all the child nodes.
         for node in xml_dom.childNodes:
             child_s = self._parse_xml(node, strongs, morph)
@@ -1505,7 +1505,7 @@ class VerseTextIter(object):
                                 lambda m: m.group(1).upper() + m.group(2),
                                 child_s)
             else:
-                verse_text += ' %s' % child_s
+                verse_text += '%s' % child_s
 
         if xml_dom.attributes:
             return italic_str % note_str % '%s%s%s' % (verse_text, strongs_str,
@@ -2051,8 +2051,8 @@ class IndexBible(object):
 
         self._non_alnum_regx = re.compile(r'\W')
         self._fix_regx = re.compile(r'\s+')
-        self._strongs_regx = re.compile(r'<([GH]\d+)>', re.I)
-        self._morph_regx = re.compile(r'\{([\w-]+)\}', re.I)
+        self._strongs_regx = re.compile(r'\s<([GH]\d+)>', re.I)
+        self._morph_regx = re.compile(r'\s\{([\w-]+)\}', re.I)
 
         self._module_dict = defaultdict(list)
         # lower_case is used to store lower_case words case sensitive
