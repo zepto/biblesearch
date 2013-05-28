@@ -225,10 +225,16 @@ class IndexDict(dict):
 
         """
 
+        path = path if path else INDEX_PATH
+
         self._non_key_text_regx = re.compile(r'[<>\{\}]')
 
         self._name = name
-        self._path = path if path else INDEX_PATH
+        self._path = path
+
+        dbm_name = '%s/%s_index_i.dbm' % (path, name)
+        self._dbm_dict = IndexDbm(dbm_name, 'r')
+
         self._lower_case = self.get('lower_case', {})
 
         super(IndexDict, self).__init__()
@@ -247,9 +253,9 @@ class IndexDict(dict):
         if self._name and (key not in self):
             # Load the value from the database if we don't have it.
             try:
-                dbm_name = '%s/%s_index_i.dbm' % (self._path, self._name)
-                with IndexDbm(dbm_name, 'r') as dbm_dict:
-                    self[key] = dbm_dict.get(key)
+                # dbm_name = '%s/%s_index_i.dbm' % (self._path, self._name)
+                # with IndexDbm(dbm_name, 'r') as dbm_dict:
+                self[key] = self._dbm_dict.get(key)
             except Exception as err:
                 print("The index is either broken or missing.", \
                       file=sys.stderr)
@@ -272,12 +278,12 @@ class IndexDict(dict):
 
         """
 
-        dbm_name = '%s/%s_index_i.dbm' % (self._path, self._name)
-        with IndexDbm(dbm_name, 'r') as dbm_dict:
-            key = dbm_dict.firstkey()
-            while key:
-                yield key
-                key = dbm_dict.nextkey(key)
+        # dbm_name = '%s/%s_index_i.dbm' % (self._path, self._name)
+        # with IndexDbm(dbm_name, 'r') as dbm_dict:
+        key = self._dbm_dict.firstkey()
+        while key:
+            yield key
+            key = self._dbm_dict.nextkey(key)
 
     def value_intersect(self, key_list, case_sensitive=False):
         """ Returns a set with only the verses that contain all the items in
@@ -384,10 +390,15 @@ class DbmDict(dict):
 
         """
 
+        path = path if path else INDEX_PATH
+
         self._non_key_text_regx = re.compile(r'[<>\{\}]')
 
         self._name = "%s.dbm" % name
-        self._path = path if path else INDEX_PATH
+        self._path = path
+
+        dbm_name = os_join(path, "%s.dbm" % name)
+        self._dbm_dict = IndexDbm(dbm_name, 'r')
 
         super(DbmDict, self).__init__()
 
@@ -405,9 +416,9 @@ class DbmDict(dict):
         if self._name and (key not in self):
             # Load the value from the database if we don't have it.
             try:
-                dbm_name = os_join(self._path, self._name)
-                with IndexDbm(dbm_name, 'r') as dbm_dict:
-                    self[key] = dbm_dict.get(key)
+                # dbm_name = os_join(self._path, self._name)
+                # with IndexDbm(dbm_name, 'r') as dbm_dict:
+                self[key] = self._dbm_dict.get(key)
             except Exception as err:
                 print("The error was: %s" % err, file=sys.stderr)
 
@@ -426,9 +437,9 @@ class DbmDict(dict):
 
         """
 
-        dbm_name = os_join(self._path, self._name)
-        with IndexDbm(dbm_name, 'r') as dbm_dict:
-            key = dbm_dict.firstkey()
-            while key:
-                yield key
-                key = dbm_dict.nextkey(key)
+        # dbm_name = os_join(self._path, self._name)
+        # with IndexDbm(dbm_name, 'r') as dbm_dict:
+        key = self._dbm_dict.firstkey()
+        while key:
+            yield key
+            key = self._dbm_dict.nextkey(key)
