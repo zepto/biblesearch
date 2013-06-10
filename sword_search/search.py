@@ -993,7 +993,7 @@ def highlight_search_terms(verse_text, regx_list, highlight_text,
 
         match_text = match.group()
         for word in match.groups():
-            if word:
+            if word and word != match_text:
                 info_print(word, tag=20)
                 try:
                     match_text = re.sub('''
