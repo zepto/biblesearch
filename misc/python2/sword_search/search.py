@@ -675,7 +675,6 @@ from .utils import *
 
 
 try:
-    import bla
     from .sword_verses import *
 except ImportError:
     Sword = None
