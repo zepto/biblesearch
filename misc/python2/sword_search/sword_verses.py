@@ -82,11 +82,11 @@ def parse_verse_range(verse_ref_list):
                                           False)
 
     verse_set = set()
-    for i in range(verse_list.Count()):
+    for i in range(verse_list.getCount()):
         key = Sword.VerseKey(verse_list.GetElement(i))
         if key:
-            upper = key.UpperBound().getText()
-            lower = key.LowerBound().getText()
+            upper = key.getUpperBound().getText()
+            lower = key.getLowerBound().getText()
             if upper != lower:
                 verse_set.update(VerseIter(lower, upper))
             else:
@@ -225,7 +225,7 @@ class Lookup(object):
 
         encoding = get_encoding()
         self._module.setKey(Sword.SWKey(key.encode('utf8')))
-        item_text = self._module.RenderText()
+        item_text = self._module.renderText()
         # Make the text printable.
         # item_text = item_text.encode(encoding, 'replace')
         # item_text = item_text.decode(encoding, 'replace')
@@ -316,7 +316,7 @@ class VerseTextIter(object):
                     lambda: self._parse_raw(self._module.getRawEntry(),
                                             strongs, morph)
         else:
-            self._render_func = self._module.RenderText
+            self._render_func = self._module.renderText
 
         self._ref_iter = reference_iter
 
@@ -355,7 +355,7 @@ class VerseTextIter(object):
         """
 
         verse_text = self._render_func()
-        if self._render_func == self._module.RenderText:
+        if self._render_func == self._module.renderText:
             verse_text = '%s %s' % (self._get_heading(), verse_text)
 
         return verse_text
@@ -380,7 +380,7 @@ class VerseTextIter(object):
                             heading_list.append(val.c_str())
 
         if heading_list:
-            return self._module.RenderText(''.join(heading_list))
+            return self._module.renderText(''.join(heading_list))
         else:
             return ''
 
@@ -684,7 +684,7 @@ class VerseIter(object):
         # Make sure the range is in order.
         start, end = sorted([start, end], key=sort_key)
         self._verse = Sword.VerseKey(start, end)
-        self._end_ref = self._verse.UpperBound().getText()
+        self._end_ref = self._verse.getUpperBound().getText()
 
         self._verse_ref = ''
 

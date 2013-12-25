@@ -2230,7 +2230,7 @@ class Search(object):
             # Get the range key.
             if not range_str:
                 range_str = 'Genesis-Revelation'
-            range_k = Sword.VerseKey().ParseVerseList(range_str, 'Genesis 1:1',
+            range_k = Sword.VerseKey().parseVerseList(range_str, 'Genesis 1:1',
                                                       True)
 
             flags = re.I if not case_sensitive else 0
@@ -3145,7 +3145,7 @@ class SearchCmd(Cmd):
                         value = '; '.join(str(i) for i in value)
                     else:
                         key = Sword.VerseKey()
-                        range_list = key.ParseVerseList(value, 'Genesis 1:1',
+                        range_list = key.parseVerseList(value, 'Genesis 1:1',
                                                         True, False)
                         value = range_list.getRangeText()
                 print('{1:{0}} = {2}'.format(max_len, setting, value))
