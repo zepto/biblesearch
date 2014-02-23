@@ -993,7 +993,7 @@ def highlight_search_terms(verse_text, regx_list, highlight_text,
 
         match_text = match.group()
         for word in match.groups():
-            if word and word != match_text:
+            if word: # and word != match_text:
                 info_print(word, tag=20)
                 try:
                     match_text = re.sub('''
@@ -1008,7 +1008,7 @@ def highlight_search_terms(verse_text, regx_list, highlight_text,
                     info_print("Error with highlighting word %s: %s" % \
                                (word, err), tag=4)
             #match_text = match_text.replace(word, '\033[7m%s\033[m' % word)
-        #print(match_text)
+        # print(match_text)
         return match_text
 
         # Strip any previous colors.
@@ -1484,7 +1484,7 @@ class Search(object):
         # This works:
         # temp_str, word_count = \
         #       cls._word_regx.subn('{0}(\\1){0}'.format(word_bound), temp_str)
-        repl = '({0}(\\1){0})'.format(word_bound)
+        repl = '(?:{0}(\\1){0})'.format(word_bound)
         temp_str, word_count = cls._word_regx.subn(repl, temp_str)
         # Replace what used to be *'s with '\w*'.
         temp_str = temp_str.replace('_star_', '\w*')

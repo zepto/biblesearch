@@ -78,12 +78,12 @@ def parse_verse_range(verse_ref_list):
 
     # Parse the list.
     # args: verse_list, default_key, expand_range, chapter_as_verse?
-    verse_list = verse_key.ParseVerseList(verse_ref_str, 'Genesis 1:1', True,
+    verse_list = verse_key.parseVerseList(verse_ref_str, 'Genesis 1:1', True,
                                           False)
 
     verse_set = set()
     for i in range(verse_list.getCount()):
-        key = Sword.VerseKey(verse_list.GetElement(i))
+        key = Sword.VerseKey(verse_list.getElement(i))
         if key:
             upper = key.getUpperBound().getText()
             lower = key.getLowerBound().getText()
