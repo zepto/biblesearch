@@ -132,7 +132,7 @@ def main(arg_list, **kwargs):
             exit()
 
         # Perform the specified search.
-        search = Search(module=module_name)
+        search = Search(module=module_name, multiword=True)
 
         extras = ()
 
