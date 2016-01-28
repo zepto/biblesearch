@@ -905,8 +905,11 @@ class IndexBible(object):
         """
 
         info_print("Indexing %s could take a while..." % self._module_name)
-        for book in self._book_gen():
-            self._index_book(book)
+        try:
+            for book in self._book_gen():
+                self._index_book(book)
+        except:
+            pass
         self._module_dict['_words_'].extend(self._words_set)
         self._module_dict['_strongs_'].extend(self._strongs_set)
         self._module_dict['_morph_'].extend(self._morph_set)
