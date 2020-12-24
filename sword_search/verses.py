@@ -833,7 +833,7 @@ class VerseRange(object):
         """
 
 
-        ref_list = _ref_regx.findall(ref_str)
+        ref_list = cls._ref_regx.findall(ref_str)
         ref_set = set()
         for start_book, start_chapter, start_verse, end_book, end_chapter, end_verse in ref_list:
             first_verse = Verse(f'{start_book} {start_chapter}:{start_verse}')
