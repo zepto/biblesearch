@@ -24,15 +24,16 @@
 """
 
 from distutils.core import setup
-from distutils.command.install import INSTALL_SCHEMES
-
-for scheme in INSTALL_SCHEMES.values():
-    scheme['data'] = scheme['purelib']
+# from distutils.command.install import INSTALL_SCHEMES
+# 
+# for scheme in INSTALL_SCHEMES.values():
+#     scheme['data'] = scheme['purelib']
 
 setup(
     name='biblesearch',
     packages=['sword_search'],
-    data_files=[('sword_search/data',['sword_search/data/ref_list.json.gz',]),],
+    package_dir={'sword_search': 'sword_search'},
+    package_data={'sword_search': ['data/*.gz']},
     scripts=['scripts/biblesearch'],
     version='1.0.0',
     description='Bible searching module using sword.',
