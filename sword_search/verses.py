@@ -293,12 +293,12 @@ class Verse(object):
     _ref_list = []
 
     _ref_regx = re.compile(r'''
-        (?P<book>\d*[^\d-]+)
-        \s*
-        (?P<chap>-?\d*)
-        :?
-        (?P<verse>-?\d*)
-        ''', re.X)
+        \b(?P<book>(?:I{1,3}|[1-3])?\s?\w+)
+        (?:\s*)?
+        (?P<chap>\d{0,3})
+        (?:\s*:\s*
+        (?P<verse>\d{1,3}))?
+        ''', re.X|re.IGNORECASE)
 
     def __init__(self, reference: str="Genesis 1:1"):
         """ Get the book, chapter, and verse of the reference so it can be
@@ -717,12 +717,18 @@ class VerseRange(object):
     """
 
     _ref_regx = re.compile(r'''
-        ;?(?P<book>\d?[^\d-]+)
-        [\s-]*
-        (?P<chap>[\d,-]*)
-        :?
-        (?P<verse>[\d,-:]*)
-        ''', re.X)
+        \b(?P<book>(?:I{1,3}|[1-3])?[^\d,-:]+)
+        (?:\s*)?
+        (?P<chap>\d{0,3})
+        (?:\s*:\s*
+        (?P<verse>\d{1,3}))?
+        (?:\s*-\s*
+        (?P<end_book>(?:I{1,3}|[1-3])?[^\d,-:]+)?
+        (?P<end_chap>\d{1,3}(?=\s*:\s*))?
+        (?:\s*:\s*)?
+        (?P<end_verse>\d{1,3})?)?
+        ''', re.X|re.IGNORECASE)
+
 
     def __init__(self, start: str="Genesis 1:1", end: str="Revelation 22:21"):
         """ Setup a range of verses.
@@ -826,53 +832,51 @@ class VerseRange(object):
 
         """
 
+
+        ref_list = _ref_regx.findall(ref_str)
         ref_set = set()
-        start_ref = ''
-        ref_list = cls._ref_regx.findall(ref_str)
-        start_book = ''
-        for book, chapters, verses in ref_list:
-            if start_book:
-                end_book = Verse('%s 1:1' % book).get_max_chapter().get_max_verse()
-                ref_set.add(VerseRange(start_book, end_book))
-                start_book = ''
-                continue
-            elif not chapters and not verses:
-                start_book = '%s 1:1' % book
-                continue
-            chapters = chapters.split(',')
-            if verses:
-                chapter = chapters.pop(-1)
-                for verse in verses.split(','):
-                    if not verse:
-                        break
-                    if start_ref:
-                        end_ref = '%s %s:%s' % (book, chapter, verse)
-                        ref_set.add(VerseRange(start_ref, end_ref))
-                        start_ref = ''
-                        break
-                    if verse.endswith('-'):
-                        start_ref = '%s %s:%s' % (book, chapter, verse[:-1])
-                        break
-                    if '-' in verse:
-                        start_v, end_v = verse.split('-')
-                        if ':' in end_v:
-                            end_c, end_v = end_v.split(':')
-                        else:
-                            end_c = chapter
-                        start_ref = '%s %s:%s' % (book, chapter, start_v)
-                        end_ref = '%s %s:%s' % (book, end_c, end_v)
-                        ref_set.add(VerseRange(start_ref, end_ref))
-                        start_ref = ''
-                    else:
-                        if ':' in verse:
-                            chapter, verse = verse.split(':')
-                        ref = '%s %s:%s' % (book, chapter, verse)
-                        ref_set.add(Verse(ref))
-            for chapter in chapters:
-                ref = '%s %s:1' % (book, chapter)
-                start = Verse(ref)
-                end = start.get_max_verse()
-                ref_set.add(VerseRange(start, end))
+        for start_book, start_chapter, start_verse, end_book, end_chapter, end_verse in ref_list:
+            first_verse = Verse(f'{start_book} {start_chapter}:{start_verse}')
+
+            # The range is only in one book.
+            if not end_book: end_book = start_book
+
+            if start_chapter and not start_verse and not end_chapter:
+                if end_verse:
+                    # This covers cases with references such as Gen1-4.
+                    end_chapter = end_verse
+                    tmp_verse = Verse(f'{end_book} {end_chapter}:1')
+                    end_verse = tmp_verse.get_max_verse()._verse
+                elif end_book == start_book:
+                    # This covers cases with references such as Gen1.  It
+                    # returns the entire chapter.
+                    end_chapter = start_chapter
+                    end_verse = first_verse.get_max_verse()._verse
+
+            if start_chapter and start_verse and not end_chapter:
+                if end_verse and end_book == start_book:
+                    # A range like Gen3:4-10
+                    end_chapter = start_chapter
+                elif end_verse:
+                    # A range like Gen 3:4-John5'
+                    end_chapter = end_verse
+                    tmp_verse = Verse(f'{end_book} {end_chapter}:1')
+                    end_verse = tmp_verse.get_max_verse()._verse
+
+            last_verse = Verse(f'{end_book} {end_chapter}:{end_verse}')
+
+            if start_book and not any((start_chapter, start_verse, end_chapter,
+                                       end_verse)):
+                # Only the book is given in this reference so include the
+                # entire book.
+                if end_book == start_book:
+                    last_verse = first_verse.get_max_chapter().get_max_verse()
+
+            if last_verse > first_verse:
+                ref_set.add(VerseRange(first_verse, last_verse))
+            else:
+                ref_set.add(first_verse)
+
         return ref_set
 
     def get_refs_list(self):
