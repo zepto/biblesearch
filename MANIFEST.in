@@ -1,6 +1,7 @@
 include *.txt
 include *.mkd
 include MANIFEST.in
+include sword_search/data/*.gz
 recursive-include docs *.txt
 recursive-include misc *.py
 recursive-include scripts *.py
