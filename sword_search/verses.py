@@ -832,30 +832,44 @@ class VerseRange(object):
 
         """
 
-
         ref_list = cls._ref_regx.findall(ref_str)
         ref_set = set()
         for start_book, start_chapter, start_verse, end_book, end_chapter, end_verse in ref_list:
             first_verse = Verse(f'{start_book} {start_chapter}:{start_verse}')
 
-            # The range is only in one book.
-            if not end_book: end_book = start_book
-
-            if start_chapter and not start_verse and not end_chapter:
+            if not start_verse and not end_chapter:
+                # This covers cases with references such as Gen1-4.
                 if end_verse:
-                    # This covers cases with references such as Gen1-4.
+                    # If end_book is None the range is in the same book.
+                    if not end_book: end_book = start_book
+
+                    # The end_verse is actually the end_chapter
                     end_chapter = end_verse
+
+                    # Include the entire chapter.
                     tmp_verse = Verse(f'{end_book} {end_chapter}:1')
                     end_verse = tmp_verse.get_max_verse()._verse
-                elif end_book == start_book:
-                    # This covers cases with references such as Gen1.  It
-                    # returns the entire chapter.
-                    end_chapter = start_chapter
-                    end_verse = first_verse.get_max_verse()._verse
 
-            if start_chapter and start_verse and not end_chapter:
-                if end_verse and end_book == start_book:
+                elif end_book == start_book or not end_book:
+                    # end_book is None so the range is in the start_book.
+                    end_book = start_book
+
+                    if start_chapter:
+                        # This covers cases with references such as Gen1.  It
+                        # returns the entire chapter.
+                        end_chapter = start_chapter
+                        end_verse = first_verse.get_max_verse()._verse
+                    else:
+                        # This coverse ranges such as gen.  It returns the
+                        # entire book.
+                        tmp_verse = first_verse.get_max_chapter()
+                        end_chapter = tmp_verse._chapter
+                        end_verse = tmp_verse.get_max_verse()._verse
+
+            if start_verse and not end_chapter:
+                if end_verse and not end_book:
                     # A range like Gen3:4-10
+                    end_book = start_book
                     end_chapter = start_chapter
                 elif end_verse:
                     # A range like Gen 3:4-John5'
@@ -863,14 +877,10 @@ class VerseRange(object):
                     tmp_verse = Verse(f'{end_book} {end_chapter}:1')
                     end_verse = tmp_verse.get_max_verse()._verse
 
-            last_verse = Verse(f'{end_book} {end_chapter}:{end_verse}')
+            # The end verse is in the same book ans the start.
+            if not end_book: end_book = start_book
 
-            if start_book and not any((start_chapter, start_verse, end_chapter,
-                                       end_verse)):
-                # Only the book is given in this reference so include the
-                # entire book.
-                if end_book == start_book:
-                    last_verse = first_verse.get_max_chapter().get_max_verse()
+            last_verse = Verse(f'{end_book} {end_chapter}:{end_verse}')
 
             if last_verse > first_verse:
                 ref_set.add(VerseRange(first_verse, last_verse))
