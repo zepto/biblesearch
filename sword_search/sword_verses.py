@@ -190,6 +190,64 @@ def make_raw_kjv_dbm(path: str=INDEX_PATH) -> str:
     return mod_to_dbm('KJV', verse_iter, path)
 
 
+class Verse(object):
+    """ Small object that acts similar to verse.Verse.
+
+    """
+
+    def __init__(self, reference: str="Genesis 1:1"):
+        """ Get the book, chapter, and verse of the reference so it can be
+        incremented and decremented.
+
+        """
+
+        self._verse_ref = Sword.VerseKey(reference)
+        self._book = self._verse_ref.getBookCount()
+        self._chapter = self._verse_ref.getChapter()
+        self._verse = self._verse_ref.getVerse()
+
+    def get_max_verse(self) -> object:
+        """ Return a Verse object of the last verse in the chapter.
+
+        """
+
+        max_verse = self._verse_ref.getVerseMax()
+        book_name = self._verse_ref.getBookName()
+        reference = f'{book_name} {self._chapter}:{max_verse}'
+        return Verse(reference)
+
+    def get_max_chapter(self) -> object:
+        """ Return a Verse object of the last chapter of the book.
+
+        """
+
+        max_chapter = self._verse_ref.getChapterMax()
+        book_name = self._verse_ref.getBookName()
+        reference = f'{book_name} {self._chapter}:1'
+        return Verse(reference)
+
+    def get_book_name(self) -> str:
+        """ Returns the book name as a string.
+
+        """
+
+        return self._verse_ref.getBookName()
+
+    def get_chapter_number(self) -> int:
+        """ Returns the number.
+
+        """
+
+        return self._chapter
+
+    def get_verse_number(self) -> int:
+        """ Returns the verse number.
+
+        """
+
+        return self._verse
+
+
 class Lookup(object):
     """ A generic object to lookup refrences in differend sword modules.
 

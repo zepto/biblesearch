@@ -710,6 +710,27 @@ class Verse(object):
         reference = "%s %s:1" % (book_name, max_chapter)
         return Verse(reference)
 
+    def get_book_name(self) -> str:
+        """ Returns the book name as a string.
+
+        """
+
+        return self._books_tup[self._book][0]
+
+    def get_chapter_number(self) -> int:
+        """ Returns the number.
+
+        """
+
+        return self._chapter
+
+    def get_verse_number(self) -> int:
+        """ Returns the verse number.
+
+        """
+
+        return self._verse
+
 
 class VerseRange(object):
     """ A verse range object.
