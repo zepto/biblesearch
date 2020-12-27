@@ -101,26 +101,33 @@ def parse_verse_range(verse_ref_list):
     return verse_set
 
 
-def add_context(ref_set, count=0):
+def add_context(ref_set, count=0, chapter: bool=False):
     """ Add count number of verses before and after each reference.
 
     """
 
-    if count == 0:
+    if count == 0 and not chapter:
         return ref_set
 
     # Make a copy to work on.
     clone_set = set(ref_set)
-    for ref in ref_set:
-        start = Sword.VerseKey(ref)
-        end = Sword.VerseKey(ref)
-        # Pass the beginning of the book.
-        start.decrement()
-        start.decrement(count - 1)
-        # Pass the end of the book.
-        end.increment()
-        end.increment(count - 1)
-        clone_set.update(VerseIter(start.getText(), end.getText()))
+    if count > 0:
+        for ref in ref_set:
+            start = Sword.VerseKey(ref)
+            end = Sword.VerseKey(ref)
+            # Pass the beginning of the book.
+            start.decrement()
+            start.decrement(count - 1)
+            # Pass the end of the book.
+            end.increment()
+            end.increment(count - 1)
+            clone_set.update(VerseIter(start.getText(), end.getText()))
+
+    if chapter:
+        for i in ref_set:
+            ref = Sword.VerseKey(i)
+            chap_ref = f'{ref.getBookName()} {ref.getChapter()}'
+            clone_set.update(parse_verse_range(chap_ref))
 
     return clone_set
 

@@ -1443,13 +1443,13 @@ def parse_verse_range(verse_list: str) -> set:
     return verse_set
 
 
-def add_context(ref_set: set, count: int=0) -> set:
+def add_context(ref_set: set, count: int=0, chapter: bool=False) -> set:
     """ Add count number of verses before and after reference and return a set
     of those references.
 
     """
 
-    if count == 0:
+    if count == 0 and not chapter:
         return ref_set
 
     # Make the argument a parseable string.
@@ -1460,6 +1460,12 @@ def add_context(ref_set: set, count: int=0) -> set:
     return_set = set()
     for i in verse_set:
         return_set.update(str(j) for j in VerseRange(i - count, i + count))
+
+    if chapter:
+        for i in verse_set:
+            chap_ref = f'{i.get_book_name()} {i._chapter}'
+            return_set.update(parse_verse_range(chap_ref))
+
     return return_set
 
 
