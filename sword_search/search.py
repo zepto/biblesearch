@@ -1138,6 +1138,9 @@ class IndexedVerseTextIter(object):
 
         """
 
+        self._fix_regx = re.compile(r'\s\s+')
+        self._punc_fix_regx = re.compile(r'\s([?.!;:\',"])')
+
         reg_list = []
         if not strongs:
             reg_list.append(r'\s*<([GH]\d+)>')
@@ -1195,7 +1198,9 @@ class IndexedVerseTextIter(object):
         """
 
         verse_text = self._index_dict[verse_ref]
-        verse_text = self._clean_regex.sub('', verse_text)
+        verse_text = self._clean_regex.sub(' ', verse_text)
+        verse_text = self._fix_regx.sub(' ', verse_text).strip()
+        verse_text = self._punc_fix_regx.sub(r'\1', verse_text).strip()
         verse_text = self._notes_regex.sub(self._notes_str, verse_text)
 
         return verse_text

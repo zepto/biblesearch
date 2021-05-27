@@ -848,7 +848,7 @@ class IndexBible(object):
         self._remove_tags_regex = re.compile(r'<[/]?[pin]>')
 
         self._non_alnum_regx = re.compile(r'\W')
-        self._fix_regx = re.compile(r'\s+')
+        self._fix_regx = re.compile(r'\s\s+')
         self._strongs_regx = re.compile(r'\s<([GH]\d+)>', re.I)
         self._morph_regx = re.compile(r'\s\{([\w-]+)\}', re.I)
 
@@ -903,7 +903,7 @@ class IndexBible(object):
         """
 
         # Remove all the morphological and strongs stuff.
-        clean_text = self._cleanup_regx.sub('', verse_text)
+        clean_text = self._cleanup_regx.sub(' ', verse_text)
         # Remove any non-alpha-numeric stuff.
         clean_text = self._non_alnum_regx.sub(' ', clean_text)
         # Replace runs of one or more spaces with just a single space.
@@ -913,8 +913,8 @@ class IndexBible(object):
         # split words are still split (i.e. where in, instead of wherein).
         # So there are split versions and non-split versions just to be sure
         # that the correct one is in there.
-        verse_text = self._strongs_regx.sub('', verse_text)
-        verse_text = self._morph_regx.sub('', verse_text)
+        verse_text = self._strongs_regx.sub(' ', verse_text)
+        verse_text = self._morph_regx.sub(' ', verse_text)
 
         # Strip out all unicode so we can search correctly.
         verse_text = verse_text.encode('ascii', 'ignore')
