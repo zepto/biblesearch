@@ -1420,6 +1420,178 @@ class RawDict(object):
                               '_words': [defaultdict(list)]}
 
 
+class IndexBible(object):
+    """ Index the bible by Strong's Numbers, Morphological Tags, and words.
+
+    """
+
+    def __init__(self, module='KJV', path=''):
+        """ Initialize the index dicts.
+
+        """
+
+        self._module_name = module
+        self._path = path if path else INDEX_PATH
+
+        # Remove morphological and strongs information.
+        self._cleanup_regx = re.compile(r'\s*(<([GH]\d*)>|\{([A-Z\d-]*)\})')
+        # Note removal regular expression.
+        self._remove_notes_regex = re.compile(r'\s?<n>\s?(.*?)\s?</n>', re.S)
+        self._remove_tags_regex = re.compile(r'<[/]?[pin]>')
+
+        self._non_alnum_regx = re.compile(r'\W')
+        self._fix_regx = re.compile(r'\s\s+')
+        self._strongs_regx = re.compile(r'\s<([GH]\d+)>', re.I)
+        self._morph_regx = re.compile(r'\s\{([\w-]+)\}', re.I)
+
+        self._module_dict = defaultdict(list)
+        # lower_case is used to store lower_case words case sensitive
+        # counterpart.  _Words_ is for easy key lookup for partial words.
+        self._words_set = set()
+        self._strongs_set = set()
+        self._morph_set = set()
+        self._module_dict.update({'lower_case': defaultdict(list)})
+
+        self._index_dict = {
+                '%s_index_i' % self._module_name: self._module_dict
+                }
+
+        self._index_built = False
+
+    def _index_strongs(self, verse_ref, verse_text):
+        """ Update the modules strongs dictionary from the verse text.
+
+        """
+
+        strongs_list = set(self._strongs_regx.findall(verse_text))
+        for strongs_num in strongs_list:
+            self._strongs_set.add(strongs_num)
+            self._module_dict[strongs_num].append(verse_ref)
+
+    def _index_morph(self, verse_ref, verse_text):
+        """ Update the modules mophological dictionary from the verse text.
+
+        """
+
+        morph_list = set(self._morph_regx.findall(verse_text))
+        for morph_num in morph_list:
+            self._morph_set.add(morph_num)
+            self._module_dict[morph_num].append(verse_ref)
+
+    def _index_words(self, verse_ref, verse_text):
+        """ Update the modules word dictionary from the verse text.
+
+        """
+
+        # Remove all the morphological and strongs stuff.
+        clean_text = self._cleanup_regx.sub(' ', verse_text)
+        # Remove any non-alpha-numeric stuff.
+        clean_text = self._non_alnum_regx.sub(' ', clean_text)
+        # Replace runs of one or more spaces with just a single space.
+        clean_text = self._fix_regx.sub(' ', clean_text).strip()
+
+        # Remove the strongs and morphological stuff in such a way that
+        # split words are still split (i.e. where in, instead of wherein).
+        # So there are split versions and non-split versions just to be sure
+        # that the correct one is in there.
+        verse_text = self._strongs_regx.sub(' ', verse_text)
+        verse_text = self._morph_regx.sub(' ', verse_text)
+
+        # Strip out all unicode so we can search correctly.
+        verse_text = verse_text.encode('ascii', 'ignore')
+        verse_text = verse_text.decode('ascii', 'ignore')
+        verse_text = self._non_alnum_regx.sub(' ', verse_text)
+        verse_text = self._fix_regx.sub(' ', verse_text).strip()
+
+        # Include the capitalized words for case sensitive search.
+        word_set = set(verse_text.split())
+        word_set.update(set(clean_text.split()))
+
+        for word in word_set:
+            if word:
+                self._words_set.add(word)
+                self._module_dict[word].append(verse_ref)
+                l_word = word.lower()
+                if l_word != word:
+                    # Map the lowercase word to the regular word for case
+                    # insensitive searches.
+                    if word not in self._module_dict['lower_case'][l_word]:
+                        self._module_dict['lower_case'][l_word].append(word)
+
+    def _index_book(self, book_name="Genesis"):
+        """ Creates indexes for strongs, morphology and words.
+
+        """
+
+        book_iter = BookIter(book_name)
+        verse_iter = VerseTextIter(book_iter, True, True, self._module_name,
+                                   render='render_raw')
+
+        for verse_ref, verse_text in verse_iter:
+            info_print('\033[%dD\033[KIndexing...%s' % \
+                       (len(verse_ref) + 20, verse_ref), end='')
+
+            # Put the entire Bible in the index, so we can pull it out
+            # faster.
+            self._module_dict[verse_ref] = verse_text
+            # Remove the notes so we don't search them.
+            verse_text = self._remove_notes_regex.sub('', verse_text)
+            # Remove tags so they don't mess anything up.
+            verse_text = self._remove_tags_regex.sub('', verse_text)
+
+            # Index everything else.
+            self._index_strongs(verse_ref, verse_text)
+            self._index_morph(verse_ref, verse_text)
+            self._index_words(verse_ref, verse_text)
+
+    def build_index(self):
+        """ Create index files of the bible for strongs numbers,
+        morphological tags, and case (in)sensitive words.
+
+        """
+
+        info_print("Indexing %s could take a while..." % self._module_name)
+        try:
+            for book in book_gen():
+                self._index_book(book)
+        except:
+            pass
+        self._module_dict['_words_'].extend(self._words_set)
+        self._module_dict['_strongs_'].extend(self._strongs_set)
+        self._module_dict['_morph_'].extend(self._morph_set)
+
+        info_print('\nDone.')
+
+        self._index_built = True
+
+    def write_index(self):
+        """ Write all the index dictionaries to their respective files.  If
+        Any of the dictionaries is empty, then build the index.
+
+        The indexes are just json-ed dictionaries.  The keys are the indexed
+        items and the values are the verse references that contain the key.
+
+        """
+
+        if not self._index_built:
+            self.build_index()
+        # Build the index if it's not already built.
+        for name, dic in self._index_dict.items():
+            info_print("Writing %s.dbm..." % name)
+            # Save as just a plain text file.  Has to be loaded all at once,
+            # so it is really slow.
+            #with open(name, 'w') as index_file:
+                #json.dump(dic, index_file, indent=4)
+        #return
+            # Save a dbm database that we can access without loading it all
+            # into memeory so it is fast.
+            dbm_name = '%s/%s.dbm' % (self._path, name)
+            with IndexDbm(dbm_name, 'nf') as index_file:
+                #with open(name, 'r') as i_file:
+                    #dic =json.load(i_file)
+                index_file.update(dic)
+
+
 def parse_verse_range(verse_list: str) -> set:
     """ Return a set of all the verses in the ranges represented by verse_list.
 
