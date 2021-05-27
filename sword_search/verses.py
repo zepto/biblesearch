@@ -292,8 +292,9 @@ class Verse(object):
     _chapter_offsets = []
     _ref_list = []
 
+        #\b(?P<book>(?:I{1,3}|[1-3])?\s?\w+)
     _ref_regx = re.compile(r'''
-        \b(?P<book>(?:I{1,3}|[1-3])?\s?\w+)
+        \b(?P<book>(?:I{1,3}|[1-3])?[^\d,-:]+)
         (?:\s*)?
         (?P<chap>\d{0,3})
         (?:\s*:\s*
@@ -698,6 +699,7 @@ class Verse(object):
         max_verse = self._verse_count[self._book][self._chapter - 1]
         book_name = self._books_tup[self._book][0]
         reference = "%s %s:%s" % (book_name, self._chapter, max_verse)
+
         return Verse(reference)
 
     def get_max_chapter(self) -> object:
@@ -791,9 +793,10 @@ class VerseRange(object):
         """
 
         temp = self._lower.copy()
-        while temp <= self._upper:
+        while temp < self._upper:
             yield temp
             temp += 1
+        yield temp
 
     def __len__(self) -> int:
         """ Return the length of the range.
@@ -848,12 +851,21 @@ class VerseRange(object):
         return {str(i) for i in self}
 
     @classmethod
-    def parse_range(cls, ref_str: str) -> set:
+    def parse_range(cls, ref_str: str, default_book: str = 'Genesis',
+                    default_chapter: int = 1) -> set:
         """ Parse a range string into a set of verses.
 
         """
 
         ref_list = cls._ref_regx.findall(ref_str)
+
+        if not ref_list:
+            if ':' in ref_str:
+                ref_str = f'{default_book} {ref_str}'
+            else:
+                ref_str = f'{default_book} {default_chapter}:{ref_str}'
+            ref_list = cls._ref_regx.findall(ref_str)
+
         ref_set = set()
         for start_book, start_chapter, start_verse, end_book, end_chapter, end_verse in ref_list:
             first_verse = Verse(f'{start_book} {start_chapter}:{start_verse}')
@@ -1592,7 +1604,7 @@ class IndexBible(object):
                 index_file.update(dic)
 
 
-def parse_verse_range(verse_list: str) -> set:
+def parse_verse_range(verse_list: list) -> set:
     """ Return a set of all the verses in the ranges represented by verse_list.
 
     """
@@ -1600,18 +1612,27 @@ def parse_verse_range(verse_list: str) -> set:
     if not verse_list:
         return set()
 
-    # Make the argument a parseable string.
+    # Make the argument a list.
     if isinstance(verse_list, str):
-        verse_str = verse_list
-    else:
-        verse_str = ','.join(verse_list)
+        verse_list = verse_list.split(',')
 
     verse_set = set()
-    for i in VerseRange.parse_range(verse_str):
-        if type(i) is VerseRange:
-            verse_set.update(i.get_refs_list())
-        else:
-            verse_set.add(str(i))
+    book = 'Genesis'
+    chapter = 1
+
+    for verse_str in verse_list:
+        verse_range = VerseRange.parse_range(verse_str, default_book=book,
+                                             default_chapter=chapter)
+        for i in verse_range:
+            if type(i) is VerseRange:
+                verse_set.update(i.get_refs_list())
+                last_verse = i._upper
+            else:
+                verse_set.add(str(i))
+                last_verse = i
+            book = last_verse.get_book_name()
+            chapter = last_verse.get_chapter_number()
+
     return verse_set
 
 
