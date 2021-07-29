@@ -18,32 +18,32 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http:#www.gnu.org/licenses/>.
 
+import re
+import sys
 from collections import defaultdict
-from xml.dom.minidom import parseString
-from textwrap import fill
 from os.path import dirname as os_dirname
 from os.path import join as os_join
-import dbm
-import sys
-import re
+from textwrap import fill
+from typing import Any, Generator, Iterator, Union
+from xml.dom.minidom import parseString
 
 import Sword
 
-from .utils import *
+from .utils import (INDEX_PATH, IndexDbm, IndexDict, get_encoding, info_print,
+                    screen_size)
 
 data_path = os_join(os_dirname(__file__), 'data')
 
 
-def book_gen():
-    """ A Generator function that yields book names in order.
-
-    """
-
+def book_gen() -> Generator[str, None, None]:
+    """Create a Generator that yields book names in order."""
     # Yield a list of all the book names in the bible.
     verse_key = Sword.VerseKey('Genesis 1:1')
     for testament in [1, 2]:
         for book in range(1, verse_key.bookCount(testament) + 1):
             yield(verse_key.bookName(testament, book))
+
+
 # book_list = list(book_gen())
 try:
     book_list = []
@@ -70,11 +70,8 @@ def sort_key(ref):
         sys.exit()
 
 
-def parse_verse_range(verse_ref_list):
-    """ Uses VerseKey ParseVerseList to parse the reference list.
-
-    """
-
+def parse_verse_range(verse_ref_list: Union[str, list]) -> set[str]:
+    """Use VerseKey ParseVerseList to parse the reference list."""
     # Make the argument a parseable string.
     if isinstance(verse_ref_list, str):
         verse_ref_str = verse_ref_list
@@ -101,11 +98,9 @@ def parse_verse_range(verse_ref_list):
     return verse_set
 
 
-def add_context(ref_set, count=0, chapter: bool=False):
-    """ Add count number of verses before and after each reference.
-
-    """
-
+def add_context(ref_set: set[str], count: int = 0,
+                chapter: bool = False) -> set[str]:
+    """Add count number of verses before and after each reference."""
     if count == 0 and not chapter:
         return ref_set
 
@@ -132,14 +127,14 @@ def add_context(ref_set, count=0, chapter: bool=False):
     return clone_set
 
 
-def mod_to_dbm(module: str, key_iter: iter, path: str) -> str:
-    """ Reads all the elements of key_iter from the module and saves them to a
-    dbm file.
+def mod_to_dbm(module: str, key_iter: Iterator, path: str) -> str:
+    """Convert a mod to a dbm.
 
+    Reads all the elements of key_iter from the module and saves them to a dbm
+    file.
     """
-
     lookup = Lookup(module_name=module)
-    dbm_name = '%s/%s.dbm' % (path, module)
+    dbm_name = f"{path}/{module}.dbm"
 
     with IndexDbm(dbm_name, 'nf') as dbm_file:
         for key in key_iter:
@@ -148,11 +143,8 @@ def mod_to_dbm(module: str, key_iter: iter, path: str) -> str:
     return dbm_name
 
 
-def make_daily_dbm(path: str=INDEX_PATH) -> str:
-    """ Saves the daily devotional to a dbm file.
-
-    """
-
+def make_daily_dbm(path: str = INDEX_PATH) -> str:
+    """Save the daily devotional to a dbm file."""
     from datetime import date, timedelta
 
     # Use a leap year to get all the days in February.
@@ -162,11 +154,8 @@ def make_daily_dbm(path: str=INDEX_PATH) -> str:
     return mod_to_dbm('Daily', date_iter, path)
 
 
-def make_strongs_dbm(path: str=INDEX_PATH) -> str:
-    """ Saves the StrongsReal modules as dbms.
-
-    """
-
+def make_strongs_dbm(path: str = INDEX_PATH) -> str:
+    """Save the StrongsReal modules as dbms."""
     keys = IndexDict('KJV')['_strongs_']
     greek_keys = (i[1:] for i in keys if i.startswith('G'))
     hebrew_keys = (i[1:] for i in keys if i.startswith('H'))
@@ -177,22 +166,16 @@ def make_strongs_dbm(path: str=INDEX_PATH) -> str:
     return '\n'.join((greek_file, hebrew_file))
 
 
-def make_robinson_dbm(path: str=INDEX_PATH) -> str:
-    """ Save robinson morph definitions in a dbm.
-
-    """
-
+def make_robinson_dbm(path: str = INDEX_PATH) -> str:
+    """Save robinson morph definitions in a dbm."""
     keys = IndexDict('KJV')['_morph_']
     robinson_keys = (i for i in keys if not i.startswith('TH'))
 
     return mod_to_dbm('Robinson', robinson_keys, path)
 
 
-def make_raw_kjv_dbm(path: str=INDEX_PATH) -> str:
-    """ Saves the KJV modules raw text as a dbm.
-
-    """
-
+def make_raw_kjv_dbm(path: str = INDEX_PATH) -> str:
+    """Save the KJV modules raw text as a dbm."""
     verse_iter = VerseIter('Genesis 1:1')
     return mod_to_dbm('KJV', verse_iter, path)
 
@@ -256,16 +239,12 @@ class Verse(object):
 
 
 class Lookup(object):
-    """ A generic object to lookup refrences in differend sword modules.
+    """A generic object to lookup refrences in differend sword modules."""
 
-    """
-
-    def __init__(self, module_name='KJV', markup=Sword.FMT_PLAIN):
-        """ Setup the module to look up information in.
-
-        """
-
-        markup = Sword.MarkupFilterMgr(markup)
+    def __init__(self, module_name: str = 'KJV',
+                 markup_int: int = Sword.FMT_PLAIN):
+        """Setup the module to look up information in."""
+        markup = Sword.MarkupFilterMgr(markup_int)
 
         # We don't own this or it will segfault.
         markup.thisown = False
@@ -288,12 +267,12 @@ class Lookup(object):
                             </scripRef>
                             ''', re.I)
 
-    def get_text(self, key):
-        """ Get the text at the given key in the module.
-        i.e. get_text('3778') returns the greek strongs.
+    def get_text(self, key: str) -> str:
+        """Get text.
 
+        Get the text at the given key in the module.  i.e. get_text('3778')
+        returns the greek strongs.
         """
-
         encoding = get_encoding()
         self._module.setKey(Sword.SWKey(key))
         item_text = self._module.renderText()
@@ -302,12 +281,12 @@ class Lookup(object):
         item_text = item_text.decode(encoding, 'replace')
         return fill(item_text, screen_size()[1])
 
-    def get_raw_text(self, key):
-        """ Get the text at the given key in the module.
-        i.e. get_text('3778') returns the greek strongs.
+    def get_raw_text(self, key: str) -> str:
+        """Get raw text.
 
+        Get the text at the given key in the module.  i.e. get_text('3778')
+        returns the greek strongs.
         """
-
         encoding = get_encoding()
         self._module.setKey(Sword.SWKey(key))
         item_text = self._module.getRawEntry()
@@ -317,11 +296,8 @@ class Lookup(object):
         item_text = item_text.decode(encoding, 'replace')
         return item_text
 
-    def get_formatted_text(self, key):
-        """ Returns the formated raw text of the specified key.
-
-        """
-
+    def get_formatted_text(self, key: str) -> str:
+        """Return the formated raw text of the specified key."""
         text = self.get_raw_text(key)
 
         # Format and highlight the text.
@@ -330,7 +306,7 @@ class Lookup(object):
         text = self._br_regx.sub('\n', text)
         text = self._bracket_regx.sub('[\\1\033[33m\\2\033[m\\3]', text)
         text = self._brace_regx.sub('{\\1\033[35m\\2\033[m\\3}', text)
-        text = self._parenthesis_regx.sub('(\\1\033[34m\\2\033[m\\3)', text)
+        text = self._parenthesis_regx.sub('(\\1\033[32m\\2\033[m\\3)', text)
         text = self._verse_ref_regx.sub('\033[32m\\1\033[m', text)
         text = self._cleanup_regx.sub('', text)
 
@@ -538,16 +514,14 @@ class VerseTextIter(object):
 
 
 class RawDict(object):
-    """ Parse raw verse text into a dictionary so it can easly be found out how
-    words are translated and how Strong's numbers are used.
+    """Parse raw text.
 
+    Parse raw verse text into a dictionary so it can easly be found out how
+    words are translated and how Strong's numbers are used.
     """
 
-    def __init__(self, reference_iter,  module='KJV'):
-        """ Initialize the sword module.
-
-        """
-
+    def __init__(self, reference_iter: Iterator,  module: str = 'KJV'):
+        """Initialize the sword module."""
         # This doesn't matter.
         markup = Sword.MarkupFilterMgr(Sword.FMT_PLAIN)
 
@@ -566,18 +540,12 @@ class RawDict(object):
         self._fix_start_tag_regx = re.compile(r'(<i>)\s*')
         self._fix_end_tag_regx = re.compile(r'\s*(</i>)')
 
-    def next(self):
-        """ Returns the next verse reference and text.
-
-        """
-
+    def next(self) -> tuple[str, tuple[str, dict]]:
+        """Return the next verse reference and text."""
         return self.__next__()
 
-    def __next__(self):
-        """ Returns a tuple of the next verse reference and text.
-
-        """
-
+    def __next__(self) -> tuple[str, tuple[str, dict]]:
+        """Return a tuple of the next verse reference and text."""
         # Retrieve the next reference.
         verse_ref = next(self._ref_iter)
         self._key.setText(verse_ref)
@@ -587,30 +555,28 @@ class RawDict(object):
 
         return (verse_ref, verse_dict)
 
-    def __iter__(self):
-        """ Returns an iterator of self.
-
-        """
-
+    def __iter__(self) -> "RawDict":
+        """Return an iterator of self."""
         return self
 
-    def get_dict(self, verse_reference):
-        """ Lookup the verse reference in the sword module specified and
-        return a dictionary from it.
+    def get_dict(self, verse_reference: str) -> tuple[str, dict]:
+        """Lookup reference.
 
+        Lookup the verse reference in the sword module specified and return a
+        dictionary from it.
         """
-
         self._key.setText(verse_reference)
         raw_text = self._module.getRawEntry()
         return self._get_parsed_dict(raw_text, True, True)
 
-    def _raw_to_dict(self, xml_dom, strongs=False, morph=False):
-        """ Recursively parse all the childNodes in a xml minidom, and build
+    def _raw_to_dict(self, xml_dom: Any, strongs: bool = False,
+                     morph: bool = False) -> tuple[str, dict]:
+        """Parse xml.
+
+        Recursively parse all the childNodes in a xml minidom, and build
         a dictionary to use for telling what strongs numbers go to what words
         and vise versa.
-
         """
-
         # The dictionary that will hold the verse.
         verse_dict = defaultdict(list)
         verse_dict['_words'].append(defaultdict(list))
@@ -719,26 +685,23 @@ class RawDict(object):
 
         return verse_text, verse_dict
 
-    def _get_parsed_dict(self, raw_text, strongs=False, morph=False):
-        """ Parse raw verse text and return a formated version.
-
-        """
-
+    def _get_parsed_dict(self, raw_text: str, strongs: bool = False,
+                         morph: bool = False) -> tuple[str, dict]:
+        """Parse raw verse text and return a formated version."""
         info_print(raw_text, tag=31)
 
         # A hack to make the raw text parse as xml.
-        xml_text = '''<?xml version="1.0"?>
-        <root xmlns="%s">
-        %s
-        </root>''' % ('verse_text', raw_text)
+        xml_text = f'''<?xml version="1.0"?>
+        <root xmlns="{'verse_text'}">
+        {raw_text}
+        </root>'''
 
         # It works now we can parse the xml dom.
         try:
             parsed_xml = parseString(xml_text)
             return self._raw_to_dict(parsed_xml, strongs, morph)
         except Exception as err:
-            info_print('Error %s while processing %s.\n' % (err, raw_text),
-                       tag=31)
+            info_print(f"Error {err} while processing {raw_text}.\n", tag=31)
             return raw_text, {'_verse_text': [raw_text],
                               '_words': [defaultdict(list)]}
 

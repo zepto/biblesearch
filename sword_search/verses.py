@@ -18,26 +18,30 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http:#www.gnu.org/licenses/>.
 
-from collections import defaultdict
-from xml.dom.minidom import parseString
-from textwrap import fill
-from os.path import dirname as os_dirname
-from os.path import join as os_join
-from difflib import get_close_matches
+"""Bible verse objects and functions."""
+
 import gzip
 import json
 import re
 import sys
+from collections import defaultdict
+from difflib import get_close_matches
+from os.path import dirname as os_dirname
+from os.path import join as os_join
+from textwrap import fill
+from typing import Any, Generator, Iterator, Union
+from xml.dom.minidom import parseString
 
-from .utils import *
+from .utils import INDEX_PATH, DbmDict, IndexDbm, info_print, screen_size
 
 data_path = os_join(os_dirname(__file__), 'data')
 
 
 class Verse(object):
-    """ An index object of Bible references that can increment and decrement a
-    reference.
+    """Bible references.
 
+    An index object of Bible references that can increment and decrement a
+    reference.
     """
 
     # This information came from the sword libraries canon.h
@@ -292,21 +296,21 @@ class Verse(object):
     _chapter_offsets = []
     _ref_list = []
 
-        #\b(?P<book>(?:I{1,3}|[1-3])?\s?\w+)
+    # \b(?P<book>(?:I{1,3}|[1-3])?\s?\w+)
     _ref_regx = re.compile(r'''
         \b(?P<book>(?:I{1,3}|[1-3])?[^\d,-:]+)
         (?:\s*)?
         (?P<chap>\d{0,3})
         (?:\s*:\s*
         (?P<verse>\d{1,3}))?
-        ''', re.X|re.IGNORECASE)
+        ''', re.X | re.IGNORECASE)
 
-    def __init__(self, reference: str="Genesis 1:1"):
-        """ Get the book, chapter, and verse of the reference so it can be
+    def __init__(self, reference: str = "Genesis 1:1"):
+        """Extract reference parts.
+
+        Get the book, chapter, and verse of the reference so it can be
         incremented and decremented.
-
         """
-
         # Initialize the class offsets lists on the first instance, so
         # all other instances can use them.
         if not self._book_offsets or not self._chapter_offsets:
@@ -326,167 +330,102 @@ class Verse(object):
         self._chapter = 1
         self._verse = 1
 
-        if type(reference) is int:
-            if reference in range(0, self._chapter_offsets[-1]):
-                self._verse_offset = reference
-            else:
-                self._verse_offset = 0
-        else:
-            self._verse_offset = self._get_valid(reference)
+        self._verse_offset = self._get_valid(reference)
 
     def __str__(self) -> str:
-        """ String representation of this verse.
-
-        """
-
+        """Return string representation of this verse."""
         return self.get_text()
 
     def __repr__(self) -> str:
-        """ __repr__ -> Returns a python expression to recreate this instance.
-
-        """
-
-        repr_str = "reference='%s'" % self
-
-        return '%s(%s)' % (self.__class__.__name__, repr_str)
+        """Return a python expression to recreate this instance."""
+        return f"{self.__class__.__name__}(reference={self.get_text()})"
 
     def __hash__(self) -> int:
-        """ Returns a hash of this Verse.
+        """Return a hash of this Verse."""
+        return hash(repr(self))
 
-        """
-
-        return hash(self._verse_offset)
-
-    def __eq__(self, other) -> bool:
-        """ True if both have equal verse offsets.
-
-        """
-
+    def __eq__(self, other: 'Verse') -> bool:
+        """Return True if both have equal verse offsets."""
         return self._verse_offset == other._verse_offset
 
-    def __ne__(self, other) -> bool:
-        """ True if both have not equal verse offsets.
-
-        """
-
+    def __ne__(self, other: 'Verse') -> bool:
+        """Return True if both have not equal verse offsets."""
         return self._verse_offset != other._verse_offset
 
-    def __lt__(self, other):
-        """ True if the verse offset of self is less than that of other.
-
-        """
-
+    def __lt__(self, other: 'Verse') -> bool:
+        """Return True if the verse offset is less than that of other."""
         return self._verse_offset < other._verse_offset
 
-    def __gt__(self, other):
-        """ True if the verse offset of self is greater than that of other.
-
-        """
-
+    def __gt__(self, other: 'Verse') -> bool:
+        """Return True if the verse offset is greater than that of other."""
         return self._verse_offset > other._verse_offset
 
-    def __ge__(self, other):
-        """ True if the verse offset of self is greater than or equal to that
-        of other.
-
-        """
-
+    def __ge__(self, other: 'Verse') -> bool:
+        """Return true if self is greater than or equal to other."""
         return self._verse_offset >= other._verse_offset
 
-    def __le__(self, other):
-        """ True if the verse offset of self is less than or equal to that
-        of other.
-
-        """
-
+    def __le__(self, other: 'Verse') -> bool:
+        """Return True when self is less than or equal to other."""
         return self._verse_offset <= other._verse_offset
 
-    def __int__(self):
-        """ Return the verse offset.
-
-        """
-
+    def __int__(self) -> int:
+        """Return the verse offset."""
         return self._verse_offset
 
-    def __add__(self, other):
-        """ Return the sum of the verse_offset and other.
-
-        """
-
+    def __add__(self, other: Union['Verse', int]) -> 'Verse':
+        """Return the sum of the verse_offset and other."""
         verse_offset = self._verse_offset + int(other)
 
         if verse_offset >= self._chapter_offsets[-1]:
             verse_offset = self._chapter_offsets[-1] - 1
 
-        return Verse(verse_offset)
+        return Verse(self._ref_list[verse_offset])
 
-    def __iadd__(self, other):
-        """ Add other to the verse offset if it is an int.
-
-        """
-
+    def __iadd__(self, other: Union['Verse', int]) -> 'Verse':
+        """Add other to the verse offset if it is an int."""
         self = self + other
         return self
 
-    def __sub__(self, other):
-        """ Return the difference of the verse offset and other.
-
-        """
-
+    def __sub__(self, other: Union['Verse', int]) -> 'Verse':
+        """Return the difference of the verse offset and other."""
         verse_offset = self._verse_offset - int(other)
-        return Verse(0 if verse_offset < 0 else verse_offset)
+        verse_ref = self._ref_list[0 if verse_offset < 0 else verse_offset]
+        return Verse(verse_ref)
 
-    def __isub__(self, other):
-        """ Subtract other from self.
-
-        """
-
+    def __isub__(self, other: Union['Verse', int]) -> 'Verse':
+        """Subtract other from self."""
         self = self - other
         return self
 
-    def __mul__(self, other):
-        """ Return the product of the verse offset and other.
-
-        """
-
+    def __mul__(self, other: Union['Verse', int]) -> 'Verse':
+        """Return the product of the verse offset and other."""
         verse_offset = self._verse_offset * int(other)
 
         if verse_offset >= self._chapter_offsets[-1]:
             verse_offset = self._chapter_offsets[-1] - 1
 
-        return Verse(verse_offset)
+        return Verse(self._ref_list[verse_offset])
 
-    def __imul__(self, other):
-        """ Multiply other to the verse offset.
-
-        """
-
+    def __imul__(self, other: Union['Verse', int]) -> 'Verse':
+        """Multiply other to the verse offset."""
         self = self * other
         return self
 
-    def __floordiv__(self, other):
-        """ Return the quotient of the verse offset and other.
-
-        """
-
+    def __floordiv__(self, other: Union['Verse', int]) -> 'Verse':
+        """Return the quotient of the verse offset and other."""
         verse_offset = self._verse_offset // int(other)
-        return Verse(0 if verse_offset < 0 else verse_offset)
+        verse_ref = self._ref_list[0 if verse_offset < 0 else verse_offset]
+        return Verse(verse_ref)
     __truediv__ = __floordiv__
 
-    def __ifloordiv__(self, other):
-        """ Divide the verse offset by other.
-
-        """
-
+    def __ifloordiv__(self, other: Union['Verse', int]) -> 'Verse':
+        """Divide the verse offset by other."""
         self = self // other
         return self
     __itruediv__ = __ifloordiv__
 
-    def _get_valid(self, reference: str, default: str="Genesis 1:1") -> str:
-        """ Given a reference make sure it is valid and return one that is.
-
-        """
-
+    def _get_valid(self, reference: str, default: str = "Genesis 1:1") -> int:
+        """Return the verse offset of a valid verse."""
         match = self._ref_regx.search(reference)
 
         # Return the default reference if this one doesn't look like
@@ -495,7 +434,10 @@ class Verse(object):
             reference = default
             match = self._ref_regx.search(reference)
 
-        book, chapter, verse = match.groups()
+        if match:
+            book, chapter, verse = match.groups()
+        else:
+            book, chapter, verse = 'Genesis', 1, 1
 
         # Make the chapter and verse default to 1.
         chapter = int(chapter or 1)
@@ -523,10 +465,7 @@ class Verse(object):
         return verse_offset
 
     def _get_book_index(self, book: str) -> int:
-        """ Get the index in the Bible of the book.
-
-        """
-
+        """Get the index in the Bible of the book."""
         name_list = []
         book = book.lower()
         for index, (name, abv1, abv2, _) in enumerate(self._books_tup):
@@ -536,7 +475,8 @@ class Verse(object):
             name_list.extend((name, abv1, abv2))
             if book in (name, abv1, abv2):
                 return index
-            elif name.startswith(book) or abv1.startswith(book) or abv2.startswith(book):
+            elif (name.startswith(book) or abv1.startswith(book) or
+                  abv2.startswith(book)):
                 return index
 
         match_list = get_close_matches(book, name_list, cutoff=0.6)
@@ -546,12 +486,12 @@ class Verse(object):
         # Default to Genesis
         return 0
 
-    def _abs_chapter(self, book_index: int, chapter: int) -> tuple:
-        """ Returns the absolute location in the Bible of the chapter, based on
-        the book_index.
+    def _abs_chapter(self, book_index: int, chapter: int) -> tuple[int, int]:
+        """Get the absolute location of the chapter.
 
+        Returns the absolute location in the Bible of the chapter, based on the
+        book_index.
         """
-
         while chapter <= 0:
             book_index -= 1
             if book_index >= 0:
@@ -559,7 +499,9 @@ class Verse(object):
             else:
                 return 0, 1
 
-        for book_num, chapter_list in enumerate(self._verse_count[book_index:]):
+        book_num, chapter_list = 0, []
+        for (book_num,
+             chapter_list) in enumerate(self._verse_count[book_index:]):
             if chapter <= len(chapter_list):
                 break
             if book_index + book_num >= self._book_count:
@@ -573,12 +515,13 @@ class Verse(object):
 
         return book_index, chapter
 
-    def _abs_verse(self, book_index: int, chapter: int, verse: int) -> tuple:
-        """ Calculate the absolute reference given a book index, chapter, and
+    def _abs_verse(self, book_index: int, chapter: int,
+                   verse: int) -> tuple[int, int, int]:
+        """Get absolute reference.
+
+        Calculate the absolute reference given a book index, chapter, and
         verse.
-
         """
-
         # First make sure the book and chapters are valid.
         book_index, chapter = self._abs_chapter(book_index, chapter)
 
@@ -630,11 +573,7 @@ class Verse(object):
         return book_index, chapter, verse
 
     def _get_verse_offset(self, book: int, chapter: int, verse: int) -> int:
-        """ Return the verse offset from the start of the Bible of the
-        reference.
-
-        """
-
+        """Get verse offset from the start of the Bible."""
         chapter_offset = ((self._book_offsets[book] - 1) + chapter)
 
         if chapter_offset >= self._chapter_count:
@@ -651,12 +590,11 @@ class Verse(object):
 
     @classmethod
     def _build_offsets(cls):
-        """ Build the book and chapter offsets lists.  The book offsets are the
-        number of chapters before that book, and the chapter offsets are the
-        number of verses before that chapter.
+        """Build the book and chapter offsets lists.
 
+        The book offsets are the number of chapters before that book, and the
+        chapter offsets are the number of verses before that chapter.
         """
-
         # Modify the class variables, so this is only run once and they
         # will be used by all instances of this class.
         cls._book_offsets.append(0)
@@ -669,75 +607,49 @@ class Verse(object):
 
     @classmethod
     def _load_reflist(cls):
-        """ Load the reference list.
-
-        """
-
+        """Load the reference list."""
         filename = os_join(data_path, 'ref_list.json.gz')
         with gzip.open(filename, 'rb') as reflist:
             cls._ref_list = json.loads(reflist.read().decode())
 
-    def copy(self):
-        """ Return a unique copy of self.
-
-        """
-
+    def copy(self) -> 'Verse':
+        """Return a unique copy of self."""
         return Verse(str(self))
 
     def get_text(self) -> str:
-        """ Returns a string representation of the verse.
-
-        """
-
+        """Return a string representation of the verse."""
         return self._ref_list[self._verse_offset]
 
-    def get_max_verse(self) -> object:
-        """ Return a Verse object of the last verse in the chapter.
-
-        """
-
+    def get_max_verse(self) -> 'Verse':
+        """Return a Verse object of the last verse in the chapter."""
         max_verse = self._verse_count[self._book][self._chapter - 1]
         book_name = self._books_tup[self._book][0]
-        reference = "%s %s:%s" % (book_name, self._chapter, max_verse)
+        reference = f"{book_name} {self._chapter}:{max_verse}"
 
         return Verse(reference)
 
-    def get_max_chapter(self) -> object:
-        """ Return a Verse object of the last chapter of the book.
-
-        """
-
+    def get_max_chapter(self) -> 'Verse':
+        """Return a Verse object of the last chapter of the book."""
         max_chapter = self._books_tup[self._book][-1]
         book_name = self._books_tup[self._book][0]
-        reference = "%s %s:1" % (book_name, max_chapter)
+        reference = f"{book_name} {max_chapter}:1"
         return Verse(reference)
 
     def get_book_name(self) -> str:
-        """ Returns the book name as a string.
-
-        """
-
+        """Return the book name as a string."""
         return self._books_tup[self._book][0]
 
     def get_chapter_number(self) -> int:
-        """ Returns the number.
-
-        """
-
+        """Return the number."""
         return self._chapter
 
     def get_verse_number(self) -> int:
-        """ Returns the verse number.
-
-        """
-
+        """Return the verse number."""
         return self._verse
 
 
 class VerseRange(object):
-    """ A verse range object.
-
-    """
+    """A verse range object."""
 
     _ref_regx = re.compile(r'''
         \b(?P<book>(?:I{1,3}|[1-3])?[^\d,-:]+)
@@ -750,48 +662,32 @@ class VerseRange(object):
         (?P<end_chap>\d{1,3}(?=\s*:\s*))?
         (?:\s*:\s*)?
         (?P<end_verse>\d{1,3})?)?
-        ''', re.X|re.IGNORECASE)
+        ''', re.X | re.IGNORECASE)
 
-
-    def __init__(self, start: str="Genesis 1:1", end: str="Revelation 22:21"):
-        """ Setup a range of verses.
-
-        """
-
-        self._lower = start if type(start) is Verse else Verse(start)
-        self._upper = end if type(end) is Verse else Verse(end)
+    def __init__(self, start: str = "Genesis 1:1",
+                 end: str = "Revelation 22:21"):
+        """Create a range of verses."""
+        self._lower = start if type(start) is Verse else Verse(str(start))
+        self._upper = end if type(end) is Verse else Verse(str(end))
 
         if self._lower > self._upper:
             self._upper = self._lower.copy()
 
     def __str__(self) -> str:
-        """ String representation of this verse.
-
-        """
-
-        return "%s-%s" % (self._lower, self._upper)
+        """Return string representation of this verse."""
+        return f"{self._lower}-{self._upper}"
 
     def __repr__(self) -> str:
-        """ __repr__ -> Returns a python expression to recreate this instance.
-
-        """
-
-        repr_str = "start='%s', end='%s'" % (self._lower, self._upper)
-
-        return '%s(%s)' % (self.__class__.__name__, repr_str)
+        """Return a python expression to recreate this instance."""
+        return (f"{self.__class__.__name__}(start={self._lower}, "
+                f"end={self._upper})")
 
     def __contains__(self, item: Verse) -> bool:
-        """ True if item is in the range.
-
-        """
-
+        """Return True if item is in the range."""
         return self._lower <= item and item <= self._upper
 
-    def __iter__(self) -> iter:
-        """ An iterator over all the verses in the range.
-
-        """
-
+    def __iter__(self) -> Generator[Verse, None, None]:
+        """Create a Generator over all the verses in the range."""
         temp = self._lower.copy()
         while temp < self._upper:
             yield temp
@@ -799,17 +695,11 @@ class VerseRange(object):
         yield temp
 
     def __len__(self) -> int:
-        """ Return the length of the range.
-
-        """
-
+        """Return the length of the range."""
         return int(self._upper) - int(self._lower) + 1
 
-    def __getitem__(self, key: int) -> Verse:
-        """ Return the key'th verse in the range.
-
-        """
-
+    def __getitem__(self, key: int) -> Union['VerseRange', Verse]:
+        """Return the key'th verse in the range."""
         if type(key) is slice:
             start = key.start if key.start else 0
             stop = key.stop if key.stop else 0
@@ -823,40 +713,34 @@ class VerseRange(object):
                 upper = self._lower + stop
             else:
                 upper = self._upper + stop + 1
-            return VerseRange(lower, upper)
+            return VerseRange(str(lower), str(upper))
         else:
             if key >= len(self):
-                raise(IndexError("index out of range: %s" % key))
+                raise(IndexError(f"Index out of range: {key}"))
             if key >= 0:
                 return self._lower + key
             else:
                 return self._upper + key + 1
 
     def index(self, item: Verse) -> int:
-        """ Return the index of item.
-
-        """
-
+        """Return the index of item."""
         if item in self:
             return int(item - self._lower)
         else:
-            raise(ValueError("%s not in range" % item))
+            raise(ValueError(f"{item} not in range"))
 
     def expand(self) -> set:
-        """ Expands this range into a set containing all the verse references
-        in this range.
+        """Get a set of all verse references in the range.
 
+        Expands this range into a set containing all the verse references in
+        this range.
         """
-
         return {str(i) for i in self}
 
     @classmethod
     def parse_range(cls, ref_str: str, default_book: str = 'Genesis',
                     default_chapter: int = 1) -> set:
-        """ Parse a range string into a set of verses.
-
-        """
-
+        """Parse a range string into a set of verses."""
         ref_list = cls._ref_regx.findall(ref_str)
 
         if not ref_list:
@@ -867,14 +751,16 @@ class VerseRange(object):
             ref_list = cls._ref_regx.findall(ref_str)
 
         ref_set = set()
-        for start_book, start_chapter, start_verse, end_book, end_chapter, end_verse in ref_list:
+        for (start_book, start_chapter, start_verse, end_book, end_chapter,
+             end_verse) in ref_list:
             first_verse = Verse(f'{start_book} {start_chapter}:{start_verse}')
 
             if not start_verse and not end_chapter:
                 # This covers cases with references such as Gen1-4.
                 if end_verse:
                     # If end_book is None the range is in the same book.
-                    if not end_book: end_book = start_book
+                    if not end_book:
+                        end_book = start_book
 
                     # The end_verse is actually the end_chapter
                     end_chapter = end_verse
@@ -911,124 +797,89 @@ class VerseRange(object):
                     end_verse = tmp_verse.get_max_verse()._verse
 
             # The end verse is in the same book ans the start.
-            if not end_book: end_book = start_book
+            if not end_book:
+                end_book = start_book
 
             last_verse = Verse(f'{end_book} {end_chapter}:{end_verse}')
 
             if last_verse > first_verse:
-                ref_set.add(VerseRange(first_verse, last_verse))
+                ref_set.add(VerseRange(str(first_verse), str(last_verse)))
             else:
                 ref_set.add(first_verse)
 
         return ref_set
 
-    def get_refs_list(self):
-        """ Return a list of all the references in the range.
-
-        """
-
-        return Verse._ref_list[int(self._lower):int(self._upper)+1]
+    def get_refs_list(self) -> list[str]:
+        """Return a list of all the references in the range."""
+        return Verse._ref_list[int(self._lower): int(self._upper) + 1]
 
     # args: verse_list, default_key, expand_range, chapter_as_verse?
-    def parse_verse_list(self, verse_list, default_key, expand_range,
-                         chapter_as_verse):
-        """ Try to do what the Sword VerseKey.ParseVerseList does.
-
-        """
-
+    def parse_verse_list(self, verse_list: list, default_key: int,
+                         expand_range: bool,
+                         chapter_as_verse: bool) -> 'VerseRange':
+        """Try to do what the Sword VerseKey.ParseVerseList does."""
         return self
 
-    def getRangeText(self):
-        """ Return the range text.
-
-        """
-
+    def getRangeText(self) -> str:
+        """Return the range text."""
         return str(self)
+
 
 VerseKey = VerseRange
 
 
 class VerseIter(object):
-    """ Iterator of verse references.
+    """Iterator of verse references."""
 
-    """
-
-    def __init__(self, start, end='Revelation of John 22:21'):
-        """ Setup the start and end references of the range.
-
-        """
-
+    def __init__(self, start: str, end: str = 'Revelation of John 22:21'):
+        """Create an iter over the range(strt, end)."""
         # Make sure the range is in order.
-        start, end = sorted([Verse(start), Verse(end)])
-        self._verse_iter = iter(VerseRange(start, end))
+        start_verse, end_verse = sorted([Verse(start), Verse(end)])
+        self._verse_iter = iter(VerseRange(str(start_verse), str(end_verse)))
 
         self._verse_ref = ''
 
-    def __next__(self):
-        """ Returns the next verse reference.
-
-        """
-
+    def __next__(self) -> str:
+        """Return the next verse reference."""
         # Return only the reference.
         return str(next(self._verse_iter))
 
-    def __iter__(self):
-        """ Returns an iterator of self.
-
-        """
-
+    def __iter__(self) -> 'VerseIter':
+        """Return an iterator of self."""
         return self
 
-    def next(self):
-        """ Returns the next verse reference.
-
-        """
-
+    def next(self) -> str:
+        """Return the next verse reference."""
         return self.__next__()
 
 
 class ChapterIter(VerseIter):
-    """ Iterates over just one chapter.
+    """Iterates over just one chapter."""
 
-    """
-
-    def __init__(self, book='Genesis', chapter=1):
-        """ Setup iterator.
-
-        """
-
-        start = Verse('%s %s:1' % (book, chapter))
+    def __init__(self, book: str = 'Genesis', chapter: int = 1):
+        """Crate iterator over all the verses in a chapter."""
+        start = Verse(f"{book} {chapter}:1")
         end = start.get_max_verse()
 
         super(ChapterIter, self).__init__(start.get_text(), end.get_text())
 
 
 class BookIter(VerseIter):
-    """ Iterates over just one book.
-
-    """
+    """Iterates over just one book."""
 
     def __init__(self, book='Genesis'):
-        """ Setup iterator.
-
-        """
-
-        start = Verse('%s 1:1' % book)
+        """Create iterator over an entire book."""
+        start = Verse(f"{book} 1:1")
         end = start.get_max_chapter().get_max_verse()
 
         super(BookIter, self).__init__(start.get_text(), end.get_text())
 
 
 class Lookup(object):
-    """ A generic object to lookup refrences in differend sword modules.
+    """A generic object to lookup refrences in differend sword modules."""
 
-    """
-
-    def __init__(self, module_name='KJV', markup=0):
-        """ Setup the module to look up information in.
-
-        """
-
+    def __init__(self, module_name: str = 'KJV', markup: int = 0):
+        """Open database to lookup information in."""
         self._dbm_dict = DbmDict(module_name, INDEX_PATH)
 
         self._bold_regx = re.compile(r'<b>(\w+)</b>', re.I)
@@ -1047,31 +898,31 @@ class Lookup(object):
                             </scripRef>
                             ''', re.I)
 
-    def get_text(self, key):
-        """ Get the text at the given key in the module.
+    def get_text(self, key: str) -> str:
+        """Get the text at the given key in the module.
+
         i.e. get_text('3778') returns the greek strongs.
-
         """
-
-        encoding = get_encoding()
         item_text = self._dbm_dict[key]
+        if not item_text:
+            return ''
         return fill(item_text, screen_size()[1])
 
-    def get_raw_text(self, key):
-        """ Get the text at the given key in the module.
-        i.e. get_text('3778') returns the greek strongs.
+    def get_raw_text(self, key: str) -> str:
+        """Get the text at the given key in the module.
 
+        i.e. get_raw_text('3778') returns the greek strongs.
         """
-
         item_text = self._dbm_dict[key]
+        if not item_text:
+            return ''
         return item_text
 
-    def get_formatted_text(self, key):
-        """ Returns the formated raw text of the specified key.
-
-        """
-
+    def get_formatted_text(self, key: str) -> str:
+        """Return the formated raw text of the specified key."""
         text = self._dbm_dict[key]
+        if not text:
+            return ''
 
         # Format and highlight the text.
         text = self._bold_regx.sub('\033[1m\\1\033[m', text)
@@ -1079,7 +930,7 @@ class Lookup(object):
         text = self._br_regx.sub('\n', text)
         text = self._bracket_regx.sub('[\\1\033[33m\\2\033[m\\3]', text)
         text = self._brace_regx.sub('{\\1\033[35m\\2\033[m\\3}', text)
-        text = self._parenthesis_regx.sub('(\\1\033[34m\\2\033[m\\3)', text)
+        text = self._parenthesis_regx.sub('(\\1\033[32m\\2\033[m\\3)', text)
         text = self._verse_ref_regx.sub('\033[32m\\1\033[m', text)
         text = self._cleanup_regx.sub('', text)
 
@@ -1087,17 +938,16 @@ class Lookup(object):
 
 
 class VerseTextIter(object):
-    """ An iterable object for accessing verses in the Bible.  Maybe it will
-    be easier maybe not.
+    """A verse text itorator.
 
+    An iterable object for accessing verses in the Bible.  Maybe it will be
+    easier maybe not.
     """
 
-    def __init__(self, reference_iter, strongs=False, morph=False,
-                 module='KJV', markup=0, render=''):
-        """ Initialize.
-
-        """
-
+    def __init__(self, reference_iter: Iterator[str], strongs: bool = False,
+                 morph: bool = False, module: str = 'KJV', markup: int = 0,
+                 render: str = ''):
+        """Initialize."""
         self._module = Lookup(module)
 
         if render.lower() == 'raw':
@@ -1109,25 +959,19 @@ class VerseTextIter(object):
             self._fix_end_tag_regx = re.compile(r'\s*(</[npi]>)')
             self._upper_divname_regx = re.compile(r'(\w+)([\'s]*)')
             self._render_func = \
-                    lambda ref: self._parse_raw(self._module.get_raw_text(ref),
-                                                strongs, morph)
+                lambda ref: self._parse_raw(self._module.get_raw_text(ref),
+                                            strongs, morph)
         else:
             self._render_func = self._module.get_text
 
         self._ref_iter = reference_iter
 
-    def next(self):
-        """ Returns the next verse reference and text.
-
-        """
-
+    def next(self) -> tuple[str, str]:
+        """Return the next verse reference and text."""
         return self.__next__()
 
-    def __next__(self):
-        """ Returns a tuple of the next verse reference and text.
-
-        """
-
+    def __next__(self) -> tuple[str, str]:
+        """Return a tuple of the next verse reference and text."""
         # Retrieve the next reference.
         verse_ref = next(self._ref_iter)
 
@@ -1136,29 +980,26 @@ class VerseTextIter(object):
 
         return (verse_ref, verse_text)
 
-    def __iter__(self):
-        """ Returns an iterator of self.
-
-        """
-
+    def __iter__(self) -> 'VerseTextIter':
+        """Return an iterator of self."""
         return self
 
-    def _get_text(self, verse_ref):
-        """ Returns the verse text.  Override this to produce formatted verse
-        text.
+    def _get_text(self, verse_ref: str) -> str:
+        """Return the verse text.
 
+        Override this to produce formatted verse text.
         """
-
         verse_text = self._render_func(verse_ref)
 
         return verse_text
 
-    def _parse_xml(self, xml_dom, strongs=False, morph=False):
-        """ Recursively parse all the childNodes in a xml minidom, and build
-        the verse text.
+    def _parse_xml(self, xml_dom: Any, strongs: bool = False,
+                   morph: bool = False) -> str:
+        """Build verse text from xml.
 
+        Recursively parse all the childNodes in a xml minidom, and build the
+        verse text.
         """
-
         # The string that will hold the verse.
         verse_text = ''
         # The name of the current tag.
@@ -1194,25 +1035,23 @@ class VerseTextIter(object):
             child_s = self._parse_xml(node, strongs, morph)
             if 'divine' in name.lower():
                 verse_text += \
-                        ' %s' % self._upper_divname_regx.sub(
-                                lambda m: m.group(1).upper() + m.group(2),
-                                child_s)
+                    ' %s' % self._upper_divname_regx.sub(
+                        lambda m: m.group(1).upper() + m.group(2),
+                        child_s)
             else:
                 verse_text += ' %s' % child_s
 
         if xml_dom.attributes:
-            return italic_str % note_str % '%s%s%s' % (verse_text, strongs_str,
+            return italic_str % note_str % "%s%s%s" % (verse_text, strongs_str,
                                                        morph_str)
         if hasattr(xml_dom, 'data'):
             info_print(xml_dom.data, tag=4)
             return xml_dom.data
         return verse_text.strip()
 
-    def _parse_raw(self, raw_text, strongs=False, morph=False):
-        """ Parse raw verse text and return a formated version.
-
-        """
-
+    def _parse_raw(self, raw_text: str, strongs: bool = False,
+                   morph: bool = False) -> str:
+        """Parse raw verse text and return a formated version."""
         # A hack to make the raw text parse as xml.
         xml_text = '''<?xml version="1.0"?>
         <root xmlns="%s">
@@ -1236,16 +1075,14 @@ class VerseTextIter(object):
 
 
 class RawDict(object):
-    """ Parse raw verse text into a dictionary so it can easly be found out how
-    words are translated and how Strong's numbers are used.
+    """Raw verse.
 
+    Parse raw verse text into a dictionary so it can easly be found out how
+    words are translated and how Strong's numbers are used.
     """
 
-    def __init__(self, reference_iter,  module='KJV'):
-        """ Initialize the sword module.
-
-        """
-
+    def __init__(self, reference_iter: Iterator[str], module: str = 'KJV'):
+        """Initialize the sword module."""
         self._module = Lookup(module)
 
         self._ref_iter = reference_iter
@@ -1256,18 +1093,12 @@ class RawDict(object):
         self._fix_start_tag_regx = re.compile(r'(<i>)\s*')
         self._fix_end_tag_regx = re.compile(r'\s*(</i>)')
 
-    def next(self):
-        """ Returns the next verse reference and text.
-
-        """
-
+    def next(self) -> tuple[str, tuple[str, tuple[str, dict]]]:
+        """Return the next verse reference and text."""
         return self.__next__()
 
-    def __next__(self):
-        """ Returns a tuple of the next verse reference and text.
-
-        """
-
+    def __next__(self) -> tuple[str, tuple[str, tuple[str, dict]]]:
+        """Return a tuple of the next verse reference and text."""
         # Retrieve the next reference.
         verse_ref = next(self._ref_iter)
 
@@ -1276,30 +1107,28 @@ class RawDict(object):
 
         return (verse_ref, verse_dict)
 
-    def __iter__(self):
-        """ Returns an iterator of self.
-
-        """
-
+    def __iter__(self) -> 'RawDict':
+        """Return an iterator of self."""
         return self
 
-    def get_dict(self, verse_reference):
-        """ Lookup the verse reference in the sword module specified and
-        return a dictionary from it.
+    def get_dict(self, verse_reference: str) -> tuple[str, tuple[str, dict]]:
+        """Get a dictionary from verse_reference.
 
+        Lookup the verse reference in the sword module specified and return a
+        dictionary from it.
         """
-
         raw_text = self._module.get_raw_text(verse_reference)
 
         return self._get_parsed_dict(raw_text, True, True)
 
-    def _raw_to_dict(self, xml_dom, strongs=False, morph=False):
-        """ Recursively parse all the childNodes in a xml minidom, and build
-        a dictionary to use for telling what strongs numbers go to what words
-        and vise versa.
+    def _raw_to_dict(self, xml_dom: Any, strongs: bool = False,
+                     morph: bool = False) -> tuple[str, dict]:
+        """Parse xml.
 
+        Recursively parse all the childNodes in a xml minidom, and build a
+        dictionary to use for telling what strongs numbers go to what words and
+        vise versa.
         """
-
         # The dictionary that will hold the verse.
         verse_dict = defaultdict(list)
         verse_dict['_words'].append(defaultdict(list))
@@ -1314,9 +1143,9 @@ class RawDict(object):
             child_s, child_d = self._raw_to_dict(node, strongs, morph)
             if 'divine' in name.lower():
                 # Uppercase 'LORD's in the text.
-                verse_text += ' %s' % child_s.upper()
+                verse_text += f" {child_s.upper()}"
             else:
-                verse_text += ' %s' % child_s
+                verse_text += f" {child_s}"
             for key, value in child_d.items():
                 # Cleanup the items in the dictionary.
                 if value and not isinstance(value[0], dict):
@@ -1356,7 +1185,7 @@ class RawDict(object):
                         # Associate the text with the number.
                         verse_dict[num].append(clean_text.strip())
                         if strongs:
-                            strongs_str += ' <%s> ' % num
+                            strongs_str += f" <{num}> "
                     # Cleanup the attribute dictionary.
                     attrib_dict['strongs'] = list(set(attrib_dict['strongs']))
                 # Check for morphology.
@@ -1368,7 +1197,7 @@ class RawDict(object):
                         # Associate the text with the tag.
                         verse_dict[tag].append(clean_text.strip())
                         if morph:
-                            morph_str += ' {%s} ' % tag
+                            morph_str += f" {{{tag}}} "
                     # Cleanup the attribute dictionary.
                     attrib_dict['morph'] = list(set(attrib_dict['morph']))
             if attrib_dict:
@@ -1398,50 +1227,42 @@ class RawDict(object):
             elif 'xmlns' in attr_dict:
                 verse_text = verse_text.strip()
                 # Include the entire verse text in the dictionary.
-                verse_dict['_%s' % attr_dict['xmlns']].append(verse_text)
+                verse_dict[f"_{attr_dict['xmlns']}"].append(verse_text)
 
             # Build up the verse string.
-            temp_str = '%s%s%s' % (verse_text, strongs_str, morph_str)
+            temp_str = f"{verse_text}{strongs_str}{morph_str}"
             verse_text = italic_str % temp_str
         if hasattr(xml_dom, 'data'):
             return xml_dom.data, verse_dict
 
         return verse_text, verse_dict
 
-    def _get_parsed_dict(self, raw_text, strongs=False, morph=False):
-        """ Parse raw verse text and return a formated version.
-
-        """
-
+    def _get_parsed_dict(self, raw_text: str, strongs: bool = False,
+                         morph: bool = False) -> tuple[str, dict]:
+        """Parse raw verse text and return a formated version."""
         info_print(raw_text, tag=31)
 
         # A hack to make the raw text parse as xml.
-        xml_text = '''<?xml version="1.0"?>
-        <root xmlns="%s">
-        %s
-        </root>''' % ('verse_text', raw_text)
+        xml_text = f'''<?xml version="1.0"?>
+        <root xmlns="{'verse_text'}">
+        {raw_text}
+        </root>'''
 
         # It works now we can parse the xml dom.
         try:
             parsed_xml = parseString(xml_text)
             return self._raw_to_dict(parsed_xml, strongs, morph)
         except Exception as err:
-            info_print('Error %s while processing %s.\n' % (err, raw_text),
-                       tag=31)
+            info_print(f"Error {err} while processing {raw_text}.\n", tag=31)
             return raw_text, {'_verse_text': [raw_text],
                               '_words': [defaultdict(list)]}
 
 
 class IndexBible(object):
-    """ Index the bible by Strong's Numbers, Morphological Tags, and words.
+    """Index the bible by Strong's Numbers, Morphological Tags, and words."""
 
-    """
-
-    def __init__(self, module='KJV', path=''):
-        """ Initialize the index dicts.
-
-        """
-
+    def __init__(self, module: str = 'KJV', path: str = ''):
+        """Initialize the index dicts."""
         self._module_name = module
         self._path = path if path else INDEX_PATH
 
@@ -1464,37 +1285,26 @@ class IndexBible(object):
         self._morph_set = set()
         self._module_dict.update({'lower_case': defaultdict(list)})
 
-        self._index_dict = {
-                '%s_index_i' % self._module_name: self._module_dict
-                }
+        self._index_dict = {f"{self._module_name}_index_i": self._module_dict}
 
         self._index_built = False
 
-    def _index_strongs(self, verse_ref, verse_text):
-        """ Update the modules strongs dictionary from the verse text.
-
-        """
-
+    def _index_strongs(self, verse_ref: str, verse_text: str):
+        """Update the modules strongs dictionary from the verse text."""
         strongs_list = set(self._strongs_regx.findall(verse_text))
         for strongs_num in strongs_list:
             self._strongs_set.add(strongs_num)
             self._module_dict[strongs_num].append(verse_ref)
 
-    def _index_morph(self, verse_ref, verse_text):
-        """ Update the modules mophological dictionary from the verse text.
-
-        """
-
+    def _index_morph(self, verse_ref: str, verse_text: str):
+        """Update the modules mophological dictionary from the verse text."""
         morph_list = set(self._morph_regx.findall(verse_text))
         for morph_num in morph_list:
             self._morph_set.add(morph_num)
             self._module_dict[morph_num].append(verse_ref)
 
-    def _index_words(self, verse_ref, verse_text):
-        """ Update the modules word dictionary from the verse text.
-
-        """
-
+    def _index_words(self, verse_ref: str, verse_text: str):
+        """Update the modules word dictionary from the verse text."""
         # Remove all the morphological and strongs stuff.
         clean_text = self._cleanup_regx.sub(' ', verse_text)
         # Remove any non-alpha-numeric stuff.
@@ -1510,8 +1320,8 @@ class IndexBible(object):
         verse_text = self._morph_regx.sub(' ', verse_text)
 
         # Strip out all unicode so we can search correctly.
-        verse_text = verse_text.encode('ascii', 'ignore')
-        verse_text = verse_text.decode('ascii', 'ignore')
+        verse_text_b = verse_text.encode('ascii', 'ignore')
+        verse_text = verse_text_b.decode('ascii', 'ignore')
         verse_text = self._non_alnum_regx.sub(' ', verse_text)
         verse_text = self._fix_regx.sub(' ', verse_text).strip()
 
@@ -1530,18 +1340,15 @@ class IndexBible(object):
                     if word not in self._module_dict['lower_case'][l_word]:
                         self._module_dict['lower_case'][l_word].append(word)
 
-    def _index_book(self, book_name="Genesis"):
-        """ Creates indexes for strongs, morphology and words.
-
-        """
-
+    def _index_book(self, book_name: str = "Genesis"):
+        """Create indexes for strongs, morphology and words."""
         book_iter = BookIter(book_name)
         verse_iter = VerseTextIter(book_iter, True, True, self._module_name,
                                    render='render_raw')
 
         for verse_ref, verse_text in verse_iter:
-            info_print('\033[%dD\033[KIndexing...%s' % \
-                       (len(verse_ref) + 20, verse_ref), end='')
+            info_print(f"\033[{len(verse_ref) + 20}D\033[KIndexing..."
+                       f"{verse_ref}", end='')
 
             # Put the entire Bible in the index, so we can pull it out
             # faster.
@@ -1557,58 +1364,58 @@ class IndexBible(object):
             self._index_words(verse_ref, verse_text)
 
     def build_index(self):
-        """ Create index files of the bible for strongs numbers,
-        morphological tags, and case (in)sensitive words.
+        """Create index.
 
+        Create index files of the bible for strongs numbers, morphological
+        tags, and case (in)sensitive words.
         """
-
-        info_print("Indexing %s could take a while..." % self._module_name)
+        info_print(f"Indexing {self._module_name} could take a while...")
         try:
             for book in book_gen():
                 self._index_book(book)
-        except:
+        except Exception:
             pass
         self._module_dict['_words_'].extend(self._words_set)
         self._module_dict['_strongs_'].extend(self._strongs_set)
         self._module_dict['_morph_'].extend(self._morph_set)
 
-        info_print('\nDone.')
+        info_print("\nDone.")
 
         self._index_built = True
 
     def write_index(self):
-        """ Write all the index dictionaries to their respective files.  If
-        Any of the dictionaries is empty, then build the index.
+        """Write the index to disk.
+
+        Write all the index dictionaries to their respective files.  If Any of
+        the dictionaries is empty, then build the index.
 
         The indexes are just json-ed dictionaries.  The keys are the indexed
         items and the values are the verse references that contain the key.
-
         """
-
         if not self._index_built:
             self.build_index()
         # Build the index if it's not already built.
         for name, dic in self._index_dict.items():
-            info_print("Writing %s.dbm..." % name)
+            info_print(f"Writing {name}.dbm...")
             # Save as just a plain text file.  Has to be loaded all at once,
             # so it is really slow.
-            #with open(name, 'w') as index_file:
-                #json.dump(dic, index_file, indent=4)
-        #return
+        #     with open(name, 'w') as index_file:
+        #         json.dump(dic, index_file, indent=4)
+        # return
             # Save a dbm database that we can access without loading it all
             # into memeory so it is fast.
-            dbm_name = '%s/%s.dbm' % (self._path, name)
+            dbm_name = f"{self._path}/{name}.dbm"
             with IndexDbm(dbm_name, 'nf') as index_file:
-                #with open(name, 'r') as i_file:
-                    #dic =json.load(i_file)
+                # with open(name, 'r') as i_file:
+                #     dic =json.load(i_file)
                 index_file.update(dic)
 
 
-def parse_verse_range(verse_list: list) -> set:
-    """ Return a set of all the verses in the ranges represented by verse_list.
+def parse_verse_range(verse_list: Union[list, str]) -> set:
+    """Return a set of verse references.
 
+    Return a set of all the verses in the ranges represented by verse_list.
     """
-
     if not verse_list:
         return set()
 
@@ -1636,18 +1443,18 @@ def parse_verse_range(verse_list: list) -> set:
     return verse_set
 
 
-def add_context(ref_set: set, count: int=0, chapter: bool=False) -> set:
-    """ Add count number of verses before and after reference and return a set
-    of those references.
+def add_context(ref_set: set[str], count: int = 0,
+                chapter: bool = False) -> set[str]:
+    """Add context refereneces to ref_st.
 
+    Add count number of verses before and after reference and return a set of
+    those references.
     """
-
     if count == 0 and not chapter:
         return ref_set
 
     # Make the argument a parseable string.
-    if not isinstance(ref_set, str):
-        reference = ','.join(ref_set)
+    reference = ','.join(ref_set)
 
     verse_set = VerseRange.parse_range(reference)
     return_set = set()
@@ -1662,28 +1469,23 @@ def add_context(ref_set: set, count: int=0, chapter: bool=False) -> set:
     return return_set
 
 
-def book_gen():
-    """ A Generator function that yields book names in order.
-
-    """
-
+def book_gen() -> Generator[str, None, None]:
+    """Create a Generator function that yields book names in order."""
     for book in Verse._books_tup:
         yield book[0]
+
+
 book_list = list(book_gen())
 
 
 # Key function used to sort a list of verse references.
 def sort_key(ref):
-    """ Sort verses by book.
-
-    """
-
+    """Sort verses by book."""
     try:
         book, chap_verse = ref.rsplit(' ', 1)
         chap, verse = chap_verse.split(':')
-        val = '%02d%03d%03d' % (int(book_list.index(book)), int(chap),
-                                int(verse))
+        val = f"{int(book_list.index(book)):02}{int(chap):03}{int(verse):03}"
         return val
     except Exception as err:
-        print('Error sorting "%s": %s' % (ref, err), file=sys.stderr)
+        print(f"Error sorting \"{ref}\": {err}", file=sys.stderr)
         sys.exit()

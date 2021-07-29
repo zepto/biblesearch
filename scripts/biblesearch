@@ -18,16 +18,24 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+"""Bible search utility."""
+
+import os
+import re
+import sys
 from argparse import ArgumentParser
+from time import strftime
 
-from sword_search import *
+from sword_search.search import (CombinedParse, Search, SearchCmd, add_context,
+                                 build_highlight_regx, highlight_search_terms,
+                                 highlight_text, mod_lookup,
+                                 render_verses_with_italics, sort_key)
+from sword_search.utils import INDEX_PATH, info_print
+from sword_search.verses import IndexBible, Lookup, parse_verse_range
 
 
-def main(arg_list, **kwargs):
-    """ Takes a string of arguments, and a bunch of keyword arguments.
-
-    """
-
+def main(arg_list: list[str], **kwargs):
+    """Take a list of arguments, and a bunch of keyword arguments."""
     info_print("\nProcessing arguments...\n", tag=2)
     module_name = kwargs['module_name']
 
@@ -61,13 +69,13 @@ def main(arg_list, **kwargs):
 
     if kwargs['raw']:
         raw_lookup = Lookup(module_name=module_name)
-        strongs = 'On' if kwargs['show_numbers'] else 'Off'
-        morph = 'On' if kwargs['show_tags'] else 'Off'
-        raw_lookup._library.setGlobalOption("Strong's Numbers", strongs)
-        raw_lookup._library.setGlobalOption("Morphological Tags", morph)
+        # strongs = 'On' if kwargs['show_numbers'] else 'Off'
+        # morph = 'On' if kwargs['show_tags'] else 'Off'
+        # raw_lookup._library.setGlobalOption("Strong's Numbers", strongs)
+        # raw_lookup._library.setGlobalOption("Morphological Tags", morph)
         for i in sorted(parse_verse_range(arg_list), key=sort_key):
-            info_print('%s\n' % raw_lookup.get_raw_text(i))
-            print('%s\n' % raw_lookup.get_text(i))
+            # info_print(f"{raw_lookup.get_raw_text(i)}\n")
+            print(f"{raw_lookup.get_text(i)}\n")
         exit()
     elif lookup:
         # Lookup verses in the argument string.
@@ -76,10 +84,8 @@ def main(arg_list, **kwargs):
         # Lookup all the Strong's Numbers in the argument list.
         # Make all the numbers seperated by a comma.
         strongs_list = ','.join(define_strongs.upper().split()).split(',')
-        #TODO: Find what Strong's Modules are available and use the best,
+        # TODO: Find what Strong's Modules are available and use the best,
         #      or let the user decide.
-        greek_strongs_lookup = Lookup('StrongsRealGreek')
-        hebrew_strongs_lookup = Lookup('StrongsRealHebrew')
         for strongs_num in strongs_list:
             # Greek Strong's Numbers start with a 'G' and Hebrew ones start
             # with an 'H.'
@@ -87,28 +93,28 @@ def main(arg_list, **kwargs):
                 mod_name = 'StrongsRealGreek'
             else:
                 mod_name = 'StrongsRealHebrew'
-            print('%s\n' % mod_lookup(mod_name, strongs_num[1:]))
+            print(f"{mod_lookup(mod_name, strongs_num[1:])}\n")
         exit()
     elif define_morph:
         # Lookup all the Morphological Tags in the argument list.
         # I don't know how to lookup Hebrew morphological tags, so I
         # only lookup Greek ones in 'Robinson.'
-        print('%s\n' % mod_lookup('Robinson', define_morph.upper()))
+        print(f"{mod_lookup('Robinson', define_morph.upper())}\n")
         exit()
     elif define_word:
         # Lookup words in the dictionary.
-        print('%s\n' % mod_lookup('WebstersDict', define_word))
+        print(f"{mod_lookup('WebstersDict', define_word)}\n")
         exit()
     elif define_kjv_word:
         # Lookup words in the KJV dictionary.
-        print('%s\n' % mod_lookup('KJVD', define_kjv_word))
+        print(f"{mod_lookup('KJVD', define_kjv_word)}\n")
         exit()
     elif daily:
         # Lookup the specified daily devotional.
         if daily.lower() == 'today':
             # Today is an alias for today's date.
-            daily = strftime('%m.%d')
-        daily_lookup = Lookup('Daily')
+            daily = strftime("%m.%d")
+        daily_lookup = Lookup("Daily")
         # Try to make the output nicer.
         print(daily_lookup.get_formatted_text(daily))
         exit()
@@ -126,9 +132,9 @@ def main(arg_list, **kwargs):
             cmd_line = SearchCmd(module=module_name)
             try:
                 cmd_line.cmdloop()
-            except:
+            except KeyboardInterrupt:
                 pass
-            print('\nGoodbye.\n')
+            print("\nGoodbye.\n")
             exit()
 
         # Perform the specified search.
@@ -137,17 +143,17 @@ def main(arg_list, **kwargs):
         extras = ()
 
         # Use the Sword modules search capabilities.
-        if search_type.startswith('sword_'):
+        if search_type.startswith("sword_"):
             extras = (search_type[6:],)
             search_type = search_type[:5]
             highlight_list = arg_list
 
         try:
             # Get the search function asked for.
-            search_func = getattr(search, '%s_search' % search_type)
-        except AttributeError as err:
+            search_func = getattr(search, f"{search_type}_search")
+        except AttributeError:
             # An invalid search type was specified.
-            print("Invalid search type: %s" % search_type, file=sys.stderr)
+            print(f"Invalid search type: {search_type}", file=sys.stderr)
             exit()
 
         # Search.
@@ -156,7 +162,7 @@ def main(arg_list, **kwargs):
                               *extras)
 
     count = len(results)
-    info_print("\nFound %s verse%s.\n" % (count, 's' if count != 1 else ''),
+    info_print(f"\nFound {count} verse{'s' if count != 1 else ''}.\n",
                tag=-10)
 
     if kwargs['quiet']:
@@ -164,18 +170,17 @@ def main(arg_list, **kwargs):
         exit()
     elif kwargs['list_only']:
         # Print a sorted list of references.
-        print('\n'.join(sorted(results, key=sort_key)))
+        print("\n".join(sorted(results, key=sort_key)))
         exit()
     else:
-        if search_type in ['combined', 'combined_phrase']:
+        if search_type in ["combined", "combined_phrase"]:
             # Combined searches are complicated.
             # Parse the search argument and build a highlight string from the
             # result.
             arg_parser = CombinedParse(arg_str)
             parsed_args = arg_parser.word_list
-            not_l = arg_parser.not_list
             # Remove any stray '+'s.
-            #highlight_str = highlight_str.replace('|+', ' ')
+            # highlight_str = highlight_str.replace('|+', ' ')
             if search_type == 'combined_phrase':
                 # A phrase search needs to highlight phrases.
                 highlight_list = parsed_args
@@ -193,9 +198,9 @@ def main(arg_list, **kwargs):
         elif search_type in ['phrase', 'mixed_phrase', 'ordered_multiword']:
             # Phrases should highlight phrases.
             highlight_list = [arg_str]
-        #elif search_type == 'partialword':
-            #for part in arg_str.split():
-                #highlight_list.append('\w*%s\w' % part)
+        # elif search_type == 'partialword':
+        #     for part in arg_str.split():
+        #         highlight_list.append('\w*%s\w' % part)
 
         if lookup:
             # Highlight anything else the user typed in.
@@ -203,8 +208,11 @@ def main(arg_list, **kwargs):
 
         # Don't modify regular expression searches.
         if search_type != 'regex':
-            regx_list = build_highlight_regx(highlight_list, case_sensitive,
-                        (search_type == 'ordered_multiword'))
+            regx_list = build_highlight_regx(
+                highlight_list,
+                case_sensitive,
+                (search_type == 'ordered_multiword')
+            )
             if kwargs['context']:
                 regx_list.extend(build_highlight_regx(results, case_sensitive))
         else:
@@ -228,7 +236,7 @@ def main(arg_list, **kwargs):
                                                highlight_search_terms,
                                                module_name, regx_list,
                                                highlight_text,
-                                               '\033\[[\d+;]*m', flags)
+                                               r'\033\[[\d+;]*m', flags)
         if kwargs['one_line']:
             # Print it all on one line.
             print('  '.join(verse_gen))
@@ -246,19 +254,19 @@ if __name__ == '__main__':
                         help='(Re-)build the search index.',
                         dest='build_index')
     parser.add_argument('-s', '--search-type', action='store', default='mixed',
-            help='Valid search types are: phrase, multiword, anyword, \
-                 eitheror, mixed, mixed_phrase, ordered_multiword, regex, \
-                 combined, combined_phrase, sword, sword_phrase, \
-                 sword_multiword, sword_entryattrib, and sword_lucene. \
-                 (default: mixed)',
-            dest='search_type')
+                        help="Valid search types are: phrase, multiword, "
+                        "anyword, eitheror, mixed, mixed_phrase, "
+                        "ordered_multiword, regex,  combined, "
+                        "combined_phrase, sword, sword_phrase,  "
+                        "sword_multiword, sword_entryattrib, and "
+                        "sword_lucene. (default: mixed)", dest='search_type')
     parser.add_argument('-S', '--strongs', action='store_true', default=False,
-                        help='Search for strongs numbers. \
-                             (Ignored in mixed search)',
+                        help="Search for strongs numbers. "
+                        "(Ignored in mixed search)",
                         dest='search_strongs')
     parser.add_argument('-M', '--morph', action='store_true', default=False,
-                        help='Search for morphological tags. \
-                             (Ignored in mixed search)',
+                        help="Search for morphological tags.  "
+                        "(Ignored in mixed search)",
                         dest='search_morphology')
     parser.add_argument('-C', '--case', action='store_true', default=False,
                         help='Case sensitive. (Ignored in regex search)',
@@ -269,52 +277,50 @@ if __name__ == '__main__':
                         help='Get the raw text of verses by reference.',
                         dest='raw')
     parser.add_argument('-l', '--lookup', action='store', default='',
-                        help='Lookup a comma seperated list of verse \
-                             references.',
+                        help="Lookup a comma seperated list of verse "
+                        " references.",
                         dest='verse_reference')
     parser.add_argument('-d', '--daily', action='store',
-                      default='', help='Lookup the devotional in \
-                            Bagsters Daily light.', dest='day')
+                        default='', help="Lookup the devotional in "
+                        " Bagsters Daily light.", dest='day')
     parser.add_argument('--lookup-strongs', action='store', default='',
-                        help="A comma seperated list of Strong's Numbers to \
-                              lookup.", dest='numbers')
+                        help="A comma seperated list of Strong's Numbers to "
+                        " lookup.", dest='numbers')
     parser.add_argument('--lookup-morphology', action='store', default='',
-                        help='A comma seperated list of Morphological Tags to \
-                              lookup.', dest='tags')
+                        help="A comma seperated list of Morphological Tags to "
+                        " lookup.", dest='tags')
     parser.add_argument('--lookup-webster', action='store', default='',
-                        help='A comma seperated list of words to lookup in \
-                              websters dictionary.', dest='words')
+                        help="A comma seperated list of words to lookup in "
+                        " websters dictionary.", dest='words')
     parser.add_argument('--lookup-kjvd', action='store', default='',
-                        help='A comma seperated list of words to lookup in \
-                              kjv dictionary.', dest='kjv_words')
+                        help="A comma seperated list of words to lookup in "
+                        " kjv dictionary.", dest='kjv_words')
     parser.add_argument('--one-line', action='store_true', default=False,
                         help='Print all the verses on one line.',
                         dest='one_line')
     parser.add_argument('--context', action='store', default=0, type=int,
-                        help='The number of verses before and after the match\
-                              to include in the output.',
+                        help="The number of verses before and after the match"
+                        " to include in the output.",
                         dest='context')
     parser.add_argument('-a', '--added', action='store_false', default=True,
-                        help="Show/search the added text (italics) default is \
-                                True.",
-                              dest='search_added')
+                        help="Show/search the added text (italics) default is "
+                        " True.", dest='search_added')
     parser.add_argument('--notes', action='store_true', default=False,
                         help="Show study notes.", dest='show_notes')
     parser.add_argument('-n', '--numbers', action='store_true', default=False,
-                        help="Include the Strong's numbers in the verse \
-                              output.", dest='show_numbers')
+                        help="Include the Strong's numbers in the verse "
+                        " output.", dest='show_numbers')
     parser.add_argument('-t', '--tags', action='store_true', default=False,
-                        help="Include the Morphological tags in the verse \
-                              output.", dest='show_tags')
+                        help="Include the Morphological tags in the verse "
+                        " output.", dest='show_tags')
     parser.add_argument('-r', '--verse_ref', action='store_true',
                         default=False,
                         help='Show only a sorted list of references',
                         dest='list_only')
     parser.add_argument('-c', '--color_output', action='store', default=3,
-                        help='How much to color. (-1 == nothing, 0 == verse \
-                              references, 1 == italics, 2 == attributes, \
-                              3 == highlight)',
-                        dest='color_level')
+                        help="How much to color. (-1 == nothing, 0 == verse "
+                        "references, 1 == italics, 2 == attributes, "
+                        "3 == highlight)", dest='color_level')
     parser.add_argument('-q', '--quiet', action='store_true', default=False,
                         help='Only print the number of verses found.',
                         dest='quiet')
@@ -327,24 +333,21 @@ if __name__ == '__main__':
     try:
         VERBOSE_LEVEL = int(args.verbose_level)
     except Exception as err:
-        print("Invalid verbose level '%s': %s" % (args.verbose_level, err),
+        print(f"Invalid verbose level '{args.verbose_level}': {err}",
               file=sys.stderr)
         VERBOSE_LEVEL = 1
     try:
         COLOR_LEVEL = int(args.color_level)
     except Exception as err:
-        print("Invalid color level '%s': %s" % (args.verbose_level, err),
+        print(f"Invalid color level '{args.color_level}': {err}",
               file=sys.stderr)
         COLOR_LEVEL = 3
 
     def stdout_to_stderr(data):
-        """ Write data to stderr.
-
-        """
-
+        """Write data to stderr."""
         sys.stderr.write(data)
         sys.stderr.flush()
 
-    #with StdoutRedirect(stdout_to_stderr):
+    # with StdoutRedirect(stdout_to_stderr):
     main(args.search_terms, **args.__dict__)
     re.purge()
