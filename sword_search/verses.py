@@ -673,6 +673,16 @@ class VerseRange(object):
         if self._lower > self._upper:
             self._upper = self._lower.copy()
 
+    @property
+    def upper(self) -> Verse:
+        """Get the upper verse in the range."""
+        return self._upper
+
+    @property
+    def lower(self) -> Verse:
+        """Get the lower verse in the range."""
+        return self._lower
+
     def __str__(self) -> str:
         """Return string representation of this verse."""
         return f"{self._lower}-{self._upper}"
@@ -739,7 +749,8 @@ class VerseRange(object):
 
     @classmethod
     def parse_range(cls, ref_str: str, default_book: str = 'Genesis',
-                    default_chapter: int = 1) -> set:
+                    default_chapter: int = 1
+                    ) -> set[Union[Verse, "VerseRange"]]:
         """Parse a range string into a set of verses."""
         ref_list = cls._ref_regx.findall(ref_str)
 
@@ -796,7 +807,7 @@ class VerseRange(object):
                     tmp_verse = Verse(f'{end_book} {end_chapter}:1')
                     end_verse = tmp_verse.get_max_verse()._verse
 
-            # The end verse is in the same book ans the start.
+            # The end verse is in the same book as the start.
             if not end_book:
                 end_book = start_book
 
@@ -1093,11 +1104,11 @@ class RawDict(object):
         self._fix_start_tag_regx = re.compile(r'(<i>)\s*')
         self._fix_end_tag_regx = re.compile(r'\s*(</i>)')
 
-    def next(self) -> tuple[str, tuple[str, tuple[str, dict]]]:
+    def next(self) -> tuple[str, tuple[str, dict]]:
         """Return the next verse reference and text."""
         return self.__next__()
 
-    def __next__(self) -> tuple[str, tuple[str, tuple[str, dict]]]:
+    def __next__(self) -> tuple[str, tuple[str, dict]]:
         """Return a tuple of the next verse reference and text."""
         # Retrieve the next reference.
         verse_ref = next(self._ref_iter)
@@ -1111,7 +1122,7 @@ class RawDict(object):
         """Return an iterator of self."""
         return self
 
-    def get_dict(self, verse_reference: str) -> tuple[str, tuple[str, dict]]:
+    def get_dict(self, verse_reference: str) -> tuple[str, dict]:
         """Get a dictionary from verse_reference.
 
         Lookup the verse reference in the sword module specified and return a
@@ -1411,7 +1422,7 @@ class IndexBible(object):
                 index_file.update(dic)
 
 
-def parse_verse_range(verse_list: Union[list, str]) -> set:
+def parse_verse_range(verse_list: Union[list, str]) -> set[str]:
     """Return a set of verse references.
 
     Return a set of all the verses in the ranges represented by verse_list.
@@ -1433,7 +1444,7 @@ def parse_verse_range(verse_list: Union[list, str]) -> set:
         for i in verse_range:
             if type(i) is VerseRange:
                 verse_set.update(i.get_refs_list())
-                last_verse = i._upper
+                last_verse = i.upper
             else:
                 verse_set.add(str(i))
                 last_verse = i

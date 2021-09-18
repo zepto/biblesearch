@@ -45,8 +45,8 @@ from textwrap import fill
 from time import strftime
 from typing import Callable, Generator, Iterator, KeysView, Pattern, Union
 
-from .utils import (VERBOSE_LEVEL, IndexDict, get_encoding, info_print,
-                    screen_size)
+from . import utils
+from .utils import IndexDict, get_encoding, info_print, screen_size
 
 try:
     from .sword_verses import (Lookup, RawDict, VerseIter, VerseTextIter,
@@ -864,8 +864,8 @@ def render_verses_with_italics(ref_list: list, wrap: bool = True,
                                *args) -> Generator[str, None, None]:
     """Render verse text with italics highlighted.
 
-    Renders a the verse text at verse_ref with italics highlighted.
-    Returns a strong "verse_ref: verse_text"
+    Renders the verse text at verse_ref with italics highlighted.
+    Returns a Generator of "verse_ref: verse_text"
         ref_list        -   List of references to render
         wrap            -   Whether to wrap the text.
         strongs         -   Include Strong's Numbers in the output.
@@ -937,7 +937,7 @@ def render_verses_with_italics(ref_list: list, wrap: bool = True,
         notes=notes,
         module=module
     )
-    if VERBOSE_LEVEL == 20:
+    if utils.VERBOSE_LEVEL == 20:
         verse_iter = VerseTextIter(
             iter(ref_list),
             strongs,
@@ -946,10 +946,10 @@ def render_verses_with_italics(ref_list: list, wrap: bool = True,
             markup=1,
             render='render_raw'
         )
-    if VERBOSE_LEVEL >= 30:
+    if utils.VERBOSE_LEVEL >= 30:
         verse_iter = RawDict(iter(ref_list), module=module)
     for verse_ref, verse_text in verse_iter:
-        if VERBOSE_LEVEL >= 30:
+        if utils.VERBOSE_LEVEL >= 30:
             len_longest_key = len(max(verse_text[1].keys(), key=len))
             for key, value in verse_text[1].items():
                 print(f"\033[33m{key:{len_longest_key}}\033[m: {value}")

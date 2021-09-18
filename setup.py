@@ -19,13 +19,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
-""" Build biblesearch package.
-
-"""
+"""Build biblesearch package."""
 
 from distutils.core import setup
+
 # from distutils.command.install import INSTALL_SCHEMES
-# 
+#
 # for scheme in INSTALL_SCHEMES.values():
 #     scheme['data'] = scheme['purelib']
 

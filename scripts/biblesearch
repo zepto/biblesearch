@@ -26,6 +26,7 @@ import sys
 from argparse import ArgumentParser
 from time import strftime
 
+from sword_search import search, utils
 from sword_search.search import (CombinedParse, Search, SearchCmd, add_context,
                                  build_highlight_regx, highlight_search_terms,
                                  highlight_text, mod_lookup,
@@ -282,7 +283,8 @@ if __name__ == '__main__':
                         dest='verse_reference')
     parser.add_argument('-d', '--daily', action='store',
                         default='', help="Lookup the devotional in "
-                        " Bagsters Daily light.", dest='day')
+                        " Bagsters Daily light. (format is month.day)",
+                        dest='day')
     parser.add_argument('--lookup-strongs', action='store', default='',
                         help="A comma seperated list of Strong's Numbers to "
                         " lookup.", dest='numbers')
@@ -331,17 +333,17 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     try:
-        VERBOSE_LEVEL = int(args.verbose_level)
+        utils.VERBOSE_LEVEL = int(args.verbose_level)
     except Exception as err:
         print(f"Invalid verbose level '{args.verbose_level}': {err}",
               file=sys.stderr)
-        VERBOSE_LEVEL = 1
+        utils.VERBOSE_LEVEL = 1
     try:
-        COLOR_LEVEL = int(args.color_level)
+        search.COLOR_LEVEL = int(args.color_level)
     except Exception as err:
         print(f"Invalid color level '{args.color_level}': {err}",
               file=sys.stderr)
-        COLOR_LEVEL = 3
+        search.COLOR_LEVEL = 3
 
     def stdout_to_stderr(data):
         """Write data to stderr."""
