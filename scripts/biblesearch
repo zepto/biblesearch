@@ -32,7 +32,7 @@ from sword_search.search import (CombinedParse, Search, SearchCmd, add_context,
                                  highlight_text, mod_lookup,
                                  render_verses_with_italics, sort_key)
 from sword_search.utils import INDEX_PATH, info_print
-from sword_search.verses import IndexBible, Lookup, parse_verse_range
+from sword_search.verses import Lookup, parse_verse_range
 
 
 def main(arg_list: list[str], **kwargs):
@@ -42,6 +42,10 @@ def main(arg_list: list[str], **kwargs):
 
     # Build the index.
     if kwargs['build_index']:
+        try:
+            from sword_search.sword_verses import IndexBible as IndexBible
+        except Exception:
+            from sword_search.verses import IndexBible
         indexer = IndexBible(module=module_name)
         indexer.write_index()
         exit()
